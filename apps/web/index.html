@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Financial Solutions — sector trend &amp; leaders</title>
+    <!--
+      The Modernist design system's one font, loaded once here rather than via
+      each component. `design-system.css` (src/design-system.css) also
+      `@import`s it for parity with the upstream export, but a `<link
+      rel="preconnect">` here lets the browser open the connection before CSS
+      parsing starts, avoiding a flash of the fallback sans-serif on first
+      load.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  </head>
+  <body>
+    <!--
+      Vite treats this file as the build ENTRY POINT, not as a static asset it
+      copies. It parses the <script type="module"> below, follows the import
+      graph from src/main.tsx, and rewrites this tag to point at the hashed
+      bundle in the production build.
+
+      The empty #root div is the mount point React takes over in main.tsx.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

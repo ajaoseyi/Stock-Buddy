@@ -1,0 +1,75 @@
+{
+  // ===========================================================================
+  // Server TypeScript config.
+  //
+  // CLAUDE.md §2 is explicit: `strict: true`, no exceptions. Everything else
+  // here follows from one decision — this is a real Node ESM program, so it
+  // uses Node's own module resolution rules rather than a bundler's.
+  //
+  // Practical consequence you WILL hit while writing code here: with
+  // `"module": "nodenext"`, every relative import needs an explicit `.js`
+  // extension, even though the file on disk is `.ts`:
+  //
+  //     import { AgentStateSchema } from "./state.js";   // ✅ resolves
+  //     import { AgentStateSchema } from "./state";      // ❌ TS2835
+  //
+  // That is not a typo — it is how ESM works at runtime. TypeScript is
+  // deliberately making you write the path that will exist after compilation
+  // (`dist/state.js`), because Node does no extension guessing for ESM.
+  // ===========================================================================
+  "compilerOptions": {
+    // --- Language + module system --------------------------------------------
+    // ES2022 gives us top-level await, `Error.cause` (used for the "rethrow
+    // with added context" rule in §8), and `Array.prototype.at`.
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+
+    // --- Emit ----------------------------------------------------------------
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "sourceMap": true,
+    // Declaration files + incremental build info are what make `tsc --build`
+    // fast on re-runs and let an editor jump to definitions in `dist`.
+    "declaration": true,
+    "declarationMap": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+
+    // --- Strictness (CLAUDE.md §2 + §8) --------------------------------------
+    "strict": true,
+    // `strict` alone does NOT enable these three. They matter here specifically:
+    //
+    // noUncheckedIndexedAccess: `sectorRankings[0]` is typed `T | undefined`
+    //   instead of `T`. Given sector-leaders.ts slices arrays by rank
+    //   ("top N up, top N down"), this catches empty-array assumptions at
+    //   compile time rather than as a runtime `undefined.pctChange`.
+    "noUncheckedIndexedAccess": true,
+    // exactOptionalPropertyTypes: `{ foo?: string }` stops accepting an
+    //   explicit `foo: undefined`. Keeps "absent" and "present but undefined"
+    //   from being confused when building Partial<AgentState> node returns.
+    "exactOptionalPropertyTypes": true,
+    // noImplicitOverride: makes `override` mandatory when subclassing.
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+
+    // --- Interop -------------------------------------------------------------
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    // With `verbatimModuleSyntax`, a type-only import must say so:
+    //   import type { AgentState } from "./state.js";
+    // This guarantees the emitted JS has no phantom imports of modules that
+    // only ever supplied types — important for ESM, where a stray import is a
+    // real runtime file read.
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*.ts"],
+  // `tests/` is type-checked by Vitest's own pipeline, not by `tsc --build`,
+  // so it stays out of the emit graph and out of `dist/`.
+  "exclude": ["node_modules", "dist", "tests"]
+}

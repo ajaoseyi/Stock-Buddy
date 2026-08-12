@@ -1,0 +1,37 @@
+{
+  // ===========================================================================
+  // Type-checking config for everything that is NOT shipped.
+  //
+  // WHY A SECOND TSCONFIG. `tsconfig.json` is the BUILD config: its `rootDir`
+  // is `src/` and it deliberately excludes `tests/`, so that `tsc --build`
+  // emits a clean `dist/` containing only server code — no test files, no
+  // vitest config.
+  //
+  // But two tools need to type-check the excluded files anyway:
+  //
+  //   1. typescript-eslint's type-aware rules (`no-floating-promises` and
+  //      friends). Without a tsconfig that includes a file, it errors with
+  //      "was not found by the project service" and skips it — meaning tests
+  //      would go unlinted.
+  //   2. `npm run typecheck`, which should catch a type error in a test just
+  //      as readily as one in `src/`.
+  //
+  // So this config extends the build config, keeps every strictness flag, and
+  // simply widens `include` to the whole workspace. `noEmit` guarantees it can
+  // never produce output that pollutes `dist/`.
+  // ===========================================================================
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Widened from `./src` because this config sees `tests/` and
+    // `vitest.config.ts`, which live outside it.
+    "rootDir": ".",
+    // The build config sets these for incremental emit; both are meaningless
+    // under `noEmit` and would otherwise write a stray .tsbuildinfo.
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

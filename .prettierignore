@@ -1,0 +1,15 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Fixtures are verbatim captures of third-party API responses. Reformatting
+# them would defeat the point of "this is exactly what the API returned".
+apps/server/tests/fixtures/
+
+# CLAUDE.md is the project spec and the standing context every session reads.
+# It is authored by hand and referenced by section number — Prettier reflowing
+# its tables or list spacing creates noisy diffs on a document that is meant to
+# be stable. Same reasoning for the README.
+CLAUDE.md
+README.md

@@ -1,0 +1,129 @@
+{
+  "address1": "2000 W. Sam Houston Pkwy. S.",
+  "address2": "Suite 200",
+  "city": "Houston",
+  "state": "TX",
+  "zip": "77042-3643",
+  "country": "United States",
+  "phone": "713 296 6000",
+  "website": "https://www.apacorp.com",
+  "industry": "Oil & Gas E&P",
+  "industryKey": "oil-gas-e-p",
+  "industryDisp": "Oil & Gas E&P",
+  "sector": "Energy",
+  "sectorKey": "energy",
+  "sectorDisp": "Energy",
+  "longBusinessSummary": "APA Corporation, an independent energy company, explores for, develops, and produces natural gas, crude oil, and natural gas liquids. The company has oil and gas operations in the United States, Egypt, and North Sea. It also has exploration and appraisal activities in Suriname, as well as holds interests in projects located in Uruguay and internationally. APA Corporation was incorporated in 1954 and is headquartered in Houston, Texas.",
+  "fullTimeEmployees": 1791,
+  "companyOfficers": [
+    {
+      "maxAge": 1,
+      "name": "Mr. John J. Christmann IV",
+      "age": 58,
+      "title": "CEO & Director",
+      "yearBorn": 1967,
+      "fiscalYear": 2025,
+      "totalPay": 5286085,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Stephen J. Riney",
+      "age": 64,
+      "title": "President",
+      "yearBorn": 1961,
+      "fiscalYear": 2025,
+      "totalPay": 3400459,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Ben C. Rodgers",
+      "age": 45,
+      "title": "Executive VP & CFO",
+      "yearBorn": 1980,
+      "fiscalYear": 2025,
+      "totalPay": 1793169,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Ms. Kimberly O. Warnica J.D.",
+      "age": 51,
+      "title": "Executive VP, Chief Legal Officer & Corporate Secretary",
+      "yearBorn": 1974,
+      "fiscalYear": 2025,
+      "totalPay": 2372748,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Ms. Tracey K. Henderson",
+      "age": 58,
+      "title": "Executive Vice President of Exploration",
+      "yearBorn": 1967,
+      "fiscalYear": 2025,
+      "totalPay": 2019140,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Robert P. Rayphole",
+      "age": 51,
+      "title": "VP, Chief Accounting Officer & Controller",
+      "yearBorn": 1974,
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Mandeep  Walia",
+      "title": "Vice President & Chief Information Officer",
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Mark D. Maddox",
+      "age": 58,
+      "title": "Executive Vice President of Administration",
+      "yearBorn": 1967,
+      "fiscalYear": 2025,
+      "totalPay": 1381793,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Stephane M. Aka",
+      "title": "Managing Director of Investor Relations",
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Scott R. Grandt",
+      "title": "Senior Vice President of U.S. Assets & Corporate Development",
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    }
+  ],
+  "auditRisk": 6,
+  "boardRisk": 2,
+  "compensationRisk": 9,
+  "shareHolderRightsRisk": 7,
+  "overallRisk": 7,
+  "governanceEpochDate": "2026-08-01T00:00:00.000Z",
+  "compensationAsOfEpochDate": "2025-12-31T00:00:00.000Z",
+  "executiveTeam": [],
+  "maxAge": 86400
+}

@@ -1,0 +1,16 @@
+{
+  "_fixtureNote": "SYNTHETIC — NOT captured from a live call. Finnhub has no demo key, so this was constructed from the documented stock/profile2 response shape. Replace with a real capture by running: FINNHUB_API_KEY=<key> node tests/fixtures/capture.mjs finnhub",
+  "country": "US",
+  "currency": "USD",
+  "estimateCurrency": "USD",
+  "exchange": "NASDAQ NMS - GLOBAL MARKET",
+  "finnhubIndustry": "Semiconductors",
+  "ipo": "1999-01-22",
+  "logo": "https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/NVDA.svg",
+  "marketCapitalization": 4231500,
+  "name": "NVIDIA Corp",
+  "phone": "14084862000",
+  "shareOutstanding": 24350.0,
+  "ticker": "NVDA",
+  "weburl": "https://www.nvidia.com/"
+}

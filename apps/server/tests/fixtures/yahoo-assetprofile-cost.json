@@ -1,0 +1,127 @@
+{
+  "address1": "999 Lake Drive",
+  "city": "Issaquah",
+  "state": "WA",
+  "zip": "98027",
+  "country": "United States",
+  "phone": "425 313 8100",
+  "website": "https://www.costco.com",
+  "industry": "Discount Stores",
+  "industryKey": "discount-stores",
+  "industryDisp": "Discount Stores",
+  "sector": "Consumer Defensive",
+  "sectorKey": "consumer-defensive",
+  "sectorDisp": "Consumer Defensive",
+  "longBusinessSummary": "Costco Wholesale Corporation, together with its subsidiaries, engages in the operation of membership warehouses in the United States, Puerto Rico, Canada, Mexico, Japan, the United Kingdom, Korea, Australia, Taiwan, China, Spain, France, Iceland, New Zealand, and Sweden. It offers merchandise, including sundries, dry groceries, candies, coolers, freezers, deli, liquor, and tobacco; non-food merchandise comprising appliances, small electronics, health and beauty aids, hardware, lawn and garden, sporting goods, tires, toys and seasonal, automotive, stamps, tickets, apparel, furniture, domestics, housewares, special order kiosks, and jewelry; and fresh food, such as meat, produce, service deli, and bakery products. The company is also involved in warehouse ancillary operations, which include gasoline, pharmacies, optical, food courts, hearing-aid centers, and tire installation centers. In addition, it engages in e-commerce, business centers, travel, and other businesses. The company was formerly known as Costco Companies, Inc. and changed its name to Costco Wholesale Corporation in August 1999. Costco Wholesale Corporation was founded in 1976 and is based in Issaquah, Washington.",
+  "fullTimeEmployees": 341000,
+  "companyOfficers": [
+    {
+      "maxAge": 1,
+      "name": "Mr. Ron M. Vachris",
+      "age": 60,
+      "title": "President, CEO & Director",
+      "yearBorn": 1965,
+      "fiscalYear": 2025,
+      "totalPay": 1841901,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Gary  Millerchip",
+      "age": 53,
+      "title": "Executive VP & CFO",
+      "yearBorn": 1972,
+      "fiscalYear": 2025,
+      "totalPay": 1316800,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Javier  Polit",
+      "age": 60,
+      "title": "Executive VP and CI&DO of Information Systems",
+      "yearBorn": 1965,
+      "fiscalYear": 2025,
+      "totalPay": 3837307,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. Pierre  Riel",
+      "age": 61,
+      "title": "Executive VP & COO of International Division",
+      "yearBorn": 1964,
+      "fiscalYear": 2025,
+      "totalPay": 1162886,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Ms. Tiffany M. Barbre",
+      "age": 51,
+      "title": "Senior VP, Corporate Controller & Principal Accounting Officer",
+      "yearBorn": 1974,
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Ms. Claudine E. Adamo",
+      "age": 54,
+      "title": "Executive Vice President of Administration",
+      "yearBorn": 1971,
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Mr. John  Sullivan",
+      "age": 64,
+      "title": "Executive VP, General Counsel & Corporate Secretary",
+      "yearBorn": 1961,
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Sheri  Flies",
+      "title": "Senior Vice President of Global Sustainability & Compliance",
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Peter  Gruening",
+      "title": "Senior VP of Membership, Marketing & Member Service Centers",
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    },
+    {
+      "maxAge": 1,
+      "name": "Brenda  Weber",
+      "title": "Senior Vice President of Human Resources",
+      "fiscalYear": 2025,
+      "exercisedValue": 0,
+      "unexercisedValue": 0
+    }
+  ],
+  "auditRisk": 6,
+  "boardRisk": 2,
+  "compensationRisk": 4,
+  "shareHolderRightsRisk": 1,
+  "overallRisk": 1,
+  "governanceEpochDate": "2026-08-01T00:00:00.000Z",
+  "compensationAsOfEpochDate": "2025-12-31T00:00:00.000Z",
+  "irWebsite": "http://phx.corporate-ir.net/phoenix.zhtml?c=83830&p=irol-irhome&cm_re=1_en-_-Bottom_Nav-_-Bottom_investor&lang=en-US",
+  "executiveTeam": [],
+  "maxAge": 86400
+}

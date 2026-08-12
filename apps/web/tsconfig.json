@@ -1,0 +1,63 @@
+{
+  // ===========================================================================
+  // Web TypeScript config.
+  //
+  // Same non-negotiable as the server (`strict: true`, CLAUDE.md §2), but the
+  // module settings differ on purpose, and the difference is worth
+  // understanding rather than copying:
+  //
+  //   server → "module": "nodenext"   — Node resolves imports at runtime, so
+  //                                     relative imports need a `.js` suffix.
+  //   web    → "module": "esnext"     — Vite/Rollup resolves imports at BUILD
+  //            + "moduleResolution":    time. The bundler is happy to resolve
+  //              "bundler"              `./App` to `./App.tsx`, so no suffix.
+  //
+  // Also note `"noEmit": true`: TypeScript here is a type-checker only. Vite
+  // (esbuild) does the actual .tsx → .js transform. `npm run build` runs
+  // `tsc --noEmit && vite build` so a type error still fails the build.
+  // ===========================================================================
+  "compilerOptions": {
+    // --- Language + DOM ------------------------------------------------------
+    "target": "ES2022",
+    // `DOM.Iterable` is what makes `for (const x of document.querySelectorAll())`
+    // type-check. Without it you get "must have a Symbol.iterator method".
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+
+    // --- React ---------------------------------------------------------------
+    // "react-jsx" = the modern automatic runtime: the compiler injects the
+    // `jsx()` calls itself, so components do NOT need `import React from
+    // "react"` at the top of every file.
+    "jsx": "react-jsx",
+
+    // --- Emit ----------------------------------------------------------------
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    // --- Strictness (CLAUDE.md §2 + §8: "no implicit `any` props") -----------
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    // JSX-specific: catches `<Foo bar={x} />` where `bar` isn't a prop of Foo
+    // only if props are typed — which §8 requires ("typed props").
+    "allowJs": false,
+
+    // --- Interop -------------------------------------------------------------
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    // --- Types the web app is allowed to see ---------------------------------
+    // `vite/client` supplies typings for `import.meta.env`, which is how the
+    // API base URL reaches the client (see src/api/client.ts).
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

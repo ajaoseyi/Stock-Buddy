@@ -1,0 +1,108 @@
+{
+  "maxAge": 1,
+  "cashPosition": 0.0007,
+  "stockPosition": 0.9994,
+  "bondPosition": 0,
+  "otherPosition": 0,
+  "preferredPosition": 0,
+  "convertiblePosition": 0,
+  "holdings": [
+    {
+      "symbol": "NVDA",
+      "holdingName": "NVIDIA Corp",
+      "holdingPercent": 0.1264092
+    },
+    {
+      "symbol": "AAPL",
+      "holdingName": "Apple Inc",
+      "holdingPercent": 0.110854104
+    },
+    {
+      "symbol": "MSFT",
+      "holdingName": "Microsoft Corp",
+      "holdingPercent": 0.072276905
+    },
+    {
+      "symbol": "AMD",
+      "holdingName": "Advanced Micro Devices Inc",
+      "holdingPercent": 0.0470794
+    },
+    {
+      "symbol": "MU",
+      "holdingName": "Micron Technology Inc",
+      "holdingPercent": 0.0467562
+    },
+    {
+      "symbol": "AVGO",
+      "holdingName": "Broadcom Inc",
+      "holdingPercent": 0.0466514
+    },
+    {
+      "symbol": "INTC",
+      "holdingName": "Intel Corp",
+      "holdingPercent": 0.042032
+    },
+    {
+      "symbol": "AMAT",
+      "holdingName": "Applied Materials Inc",
+      "holdingPercent": 0.0365592
+    },
+    {
+      "symbol": "LRCX",
+      "holdingName": "Lam Research Corp",
+      "holdingPercent": 0.034528602
+    },
+    {
+      "symbol": "CSCO",
+      "holdingName": "Cisco Systems Inc",
+      "holdingPercent": 0.029561501
+    }
+  ],
+  "equityHoldings": {
+    "priceToEarnings": 0.02806,
+    "priceToBook": 0.08372,
+    "priceToSales": 0.10556,
+    "priceToCashflow": 0.03611
+  },
+  "bondHoldings": {},
+  "bondRatings": [
+    {
+      "us_government": 0
+    }
+  ],
+  "sectorWeightings": [
+    {
+      "realestate": 0
+    },
+    {
+      "consumer_cyclical": 0
+    },
+    {
+      "basic_materials": 0
+    },
+    {
+      "consumer_defensive": 0
+    },
+    {
+      "technology": 0.99120003
+    },
+    {
+      "communication_services": 0.0088
+    },
+    {
+      "financial_services": 0
+    },
+    {
+      "utilities": 0
+    },
+    {
+      "industrials": 0
+    },
+    {
+      "energy": 0
+    },
+    {
+      "healthcare": 0
+    }
+  ]
+}

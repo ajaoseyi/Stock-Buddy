@@ -1,0 +1,30 @@
+# --- Dependencies -----------------------------------------------------------
+node_modules/
+
+# --- Build output -----------------------------------------------------------
+dist/
+build/
+*.tsbuildinfo
+
+# --- Secrets ----------------------------------------------------------------
+# Only `.env.example` (which holds key NAMES and no values) is ever committed.
+.env
+.env.local
+.env.*.local
+
+# --- Local cache database ---------------------------------------------------
+# `tools/cache.ts` writes a better-sqlite3 file here. It is a rebuildable
+# cache of third-party API responses, never a source of truth, so it stays out
+# of version control.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+apps/server/.cache/
+
+# --- Tooling / editor -------------------------------------------------------
+coverage/
+.vite/
+.eslintcache
+.DS_Store
+Thumbs.db

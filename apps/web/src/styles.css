@@ -1,0 +1,774 @@
+/* ===========================================================================
+   styles.css — the APP layer on top of the Modernist design system.
+
+   `design-system.css` owns the look: tokens, `.btn`, `.input`, `.card`,
+   `.table`, `.nav`, `.dialog`, `.tag`, `.seg`. This file adds only what the
+   application needs that the system does not ship — layout shells, the sector
+   grid, the quadrant plot — and it does so exclusively through the system's
+   tokens. No raw hex, no font stack, no ad-hoc spacing value the `--space-*`
+   scale already carries.
+
+   The design captures its layout as inline styles on every element. Those are
+   translated into the classes below rather than copied into JSX, because a
+   value like "the sector grid is a 150px-minimum auto-fit grid" is a fact about
+   the design that belongs in one place, not repeated at every call site.
+
+   ONE RULE CARRIED OVER FROM THE PREVIOUS STYLESHEET, DELIBERATELY
+   ---------------------------------------------------------------
+   Tabular figures on every number (`.num`). The entire purpose of these tables
+   is letting a reader check the prose against the computed data, and digits
+   that do not line up vertically make a column of figures unscannable.
+   =========================================================================== */
+
+/* --- App-specific tokens -----------------------------------------------------
+   The Modernist system (design-system.css) is deliberately monochrome plus one
+   red accent — it has no green token, by design. The "verified" badge is a
+   narrow, explicit exception: whether a report's figures were checked is a
+   genuinely different status from "unverified", and green is the fastest cue
+   for that. One token pair lives here, once, rather than a raw hex inline. */
+:root {
+  --color-success-bg: #e6f4ea;
+  --color-success-text: #1e6b3a;
+}
+
+/* --- Shell ----------------------------------------------------------------- */
+
+.sfs-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+.sfs-nav-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  max-width: 640px;
+  min-width: 240px;
+}
+
+/* --- Landing --------------------------------------------------------------- */
+
+.sfs-landing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+}
+
+.sfs-landing h1 {
+  margin-bottom: var(--space-2);
+}
+
+.sfs-landing-sub {
+  font-size: 15px;
+  margin: 0;
+}
+
+.sfs-ask-row {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.sfs-ask-row .input {
+  flex: 1;
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.sfs-ask-row .btn {
+  min-height: 44px;
+}
+
+.sfs-examples {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* The system's `.btn-block` is a single-line action; an example prompt is a
+   sentence, so it is allowed to wrap while keeping the flush-left label the
+   system insists on. */
+.sfs-example {
+  height: auto;
+  white-space: normal;
+  text-align: left;
+  align-items: flex-start;
+  padding: 13px 16px;
+  line-height: 1.4;
+  margin-top: 0;
+}
+
+/* --- Working --------------------------------------------------------------- */
+
+@keyframes sfs-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.sfs-working {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-6);
+}
+
+.sfs-working-inner {
+  width: 100%;
+  max-width: 480px;
+}
+
+.sfs-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.sfs-step-mark {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid var(--color-divider);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.sfs-step-done .sfs-step-mark {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.sfs-step-active .sfs-step-mark {
+  background: var(--color-neutral-300);
+  animation: sfs-pulse 1.2s ease-in-out infinite;
+}
+
+.sfs-step-label {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.sfs-step-pending .sfs-step-label {
+  color: var(--color-neutral-500);
+}
+
+/*
+ * Live narration under an active/completed step — a growing list of the real
+ * messages that node emitted, not a single line that overwrites itself.
+ * Unbounded height: every message stays visible and the page itself scrolls
+ * as the log grows (see the auto-scroll effect in App.tsx).
+ */
+.sfs-step-log {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  font-size: 12.5px;
+}
+
+.sfs-step-log li {
+  padding: 1px 0;
+  color: var(--color-neutral-500);
+}
+
+/* The most recent line reads as "what's happening now" — everything above it is history. */
+.sfs-step-log li:last-child {
+  color: var(--color-text);
+}
+
+/* --- Report ---------------------------------------------------------------- */
+
+.sfs-report {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.sfs-report-inner {
+  width: 100%;
+  max-width: 980px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.sfs-history {
+  padding: var(--space-3) var(--space-6) 0;
+}
+
+.sfs-eyebrow {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-1);
+}
+
+.sfs-chip-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sfs-chip {
+  border: 1px solid var(--color-divider);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: var(--font-body);
+  gap: 6px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sfs-chip:hover {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+
+.sfs-chip-current {
+  background: var(--color-accent-100);
+}
+
+.sfs-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.sfs-section-head h6 {
+  margin: 0;
+}
+
+/* The "verified" badge — see the app-specific-tokens note above for why this
+   is the one place green appears in an otherwise monochrome+red palette. */
+.sfs-tag-verified {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+
+/* Larger and near-full-contrast on purpose — this is the question the whole
+   report answers, and the previous 12.5px/55%-opacity/italic treatment read
+   as a footnote rather than the framing line it actually is. */
+.sfs-requery {
+  font-size: 15px;
+  line-height: 1.5;
+  margin-bottom: var(--space-3);
+  color: color-mix(in srgb, var(--color-text) 82%, transparent);
+}
+
+/* --- Narrative ------------------------------------------------------------- */
+
+/* 18px on the narrative is the design's one deliberate step up from body size:
+   the prose is the answer, everything below it is evidence. */
+.sfs-narrative {
+  font-size: 18px;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.sfs-narrative p:last-child {
+  margin-bottom: 0;
+}
+
+.sfs-narrative ul {
+  margin: 0 0 var(--space-3);
+  padding-left: 1.2em;
+}
+
+.sfs-narrative h3,
+.sfs-narrative h4 {
+  font-size: 16px;
+  margin-top: var(--space-4);
+}
+
+.sfs-narrative code {
+  font-size: 0.9em;
+  background: var(--color-surface);
+  padding: 1px 4px;
+}
+
+/* An entity the reader can click to jump to its data. Rendered as a button so
+   it is keyboard reachable — the design draws it as a bordered span, which
+   would be invisible to a keyboard and to a screen reader. The accent-700 step
+   is the system's rule for accent text at paragraph size (the base accent only
+   reaches 3:1 against this ground). */
+.sfs-token {
+  font: inherit;
+  color: var(--color-accent-700);
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-accent);
+  padding: 0;
+}
+
+.sfs-token:hover {
+  background: var(--color-accent-100);
+}
+
+.sfs-note {
+  margin-top: var(--space-3);
+  font-size: 12.5px;
+}
+
+.sfs-note-list {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2em;
+  font-size: 12.5px;
+}
+
+.sfs-note-list li {
+  margin-bottom: var(--space-1);
+}
+
+/* --- Sector ranking grid --------------------------------------------------- */
+
+/* 1px gaps over a divider-coloured background: the design's "let the grid show"
+   rule — the rules between cells ARE the structure, so they are drawn as
+   background bleed rather than per-cell borders that would double up. */
+.sfs-sector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--color-divider);
+  border: 1px solid var(--color-divider);
+}
+
+.sfs-sector-cell {
+  text-align: left;
+  background: var(--color-surface);
+  border: none;
+  padding: var(--space-3);
+  cursor: pointer;
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+.sfs-sector-cell:hover {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+
+.sfs-sector-cell-active {
+  background: var(--color-accent-100);
+}
+
+.sfs-sector-cell-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.sfs-sector-cell-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.sfs-sector-cell-arrow {
+  font-size: 12px;
+}
+
+.sfs-sector-cell-pct {
+  font-size: 17px;
+  font-weight: 800;
+  font-family: var(--font-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.sfs-sector-cell-source {
+  font-size: 10.5px;
+  margin-top: var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sfs-up {
+  color: var(--color-accent-700);
+}
+
+.sfs-down {
+  color: var(--color-neutral-700);
+}
+
+/* --- Quadrant chart -------------------------------------------------------- */
+
+.sfs-chart-frame {
+  position: relative;
+  height: 340px;
+  margin: 10px 30px 26px;
+}
+
+.sfs-chart-axis {
+  position: absolute;
+  background: var(--color-divider);
+}
+
+.sfs-chart-axis-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.sfs-chart-axis-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.sfs-chart-dot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+.sfs-chart-mark {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-bg);
+  box-shadow: 0 0 0 1px var(--color-divider);
+}
+
+/* Unlabelled dots sit behind labelled ones so a crowded sector still reads. */
+.sfs-chart-dot-plain .sfs-chart-mark {
+  width: 8px;
+  height: 8px;
+  opacity: 0.55;
+}
+
+.sfs-chart-label {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--color-bg);
+  padding: 1px 4px;
+}
+
+.sfs-chart-edge {
+  position: absolute;
+  font-size: 11px;
+}
+
+.sfs-chart-edge-bl {
+  bottom: -24px;
+  left: 0;
+}
+.sfs-chart-edge-br {
+  bottom: -24px;
+  right: 0;
+}
+.sfs-chart-edge-tl,
+.sfs-chart-edge-ll {
+  left: -26px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.sfs-chart-edge-tl {
+  top: 0;
+}
+.sfs-chart-edge-ll {
+  bottom: 0;
+}
+
+.sfs-chart-legend {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  justify-content: center;
+  padding-top: var(--space-3);
+  border-top: 2px solid var(--color-divider);
+}
+
+.sfs-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+
+.sfs-legend-swatch {
+  width: 9px;
+  height: 9px;
+}
+
+/* --- Narrow-viewport leader list ------------------------------------------- */
+
+.sfs-leader-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--color-divider);
+  border: 1px solid var(--color-divider);
+  margin-bottom: var(--space-4);
+}
+
+.sfs-leader-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--color-surface);
+  border: none;
+  padding: var(--space-3);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+.sfs-leader-row:hover {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+
+.sfs-leader-row-id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sfs-leader-row-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.sfs-leader-row-ticker {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.sfs-leader-row-figures {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Tables ---------------------------------------------------------------- */
+
+.sfs-table-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.sfs-table-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12.5px;
+}
+
+.sfs-select {
+  width: auto;
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.sfs-table-scroll {
+  overflow-x: auto;
+}
+
+.sfs-see-more {
+  margin-top: var(--space-3);
+}
+
+.sfs-see-more-arrow {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.sfs-see-more-arrow-up {
+  transform: rotate(180deg);
+}
+
+/* Digits in equal-width cells — the difference between a table you can scan and
+   one you cannot. */
+.num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sfs-sort-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+}
+
+.sfs-sort-active {
+  color: var(--color-accent-700);
+}
+
+.sfs-ticker-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+}
+
+.sfs-ticker-btn:hover {
+  color: var(--color-accent-700);
+}
+
+/* --- Drilldown ------------------------------------------------------------- */
+
+.sfs-metric-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 12.5px;
+  margin-bottom: var(--space-1);
+}
+
+.sfs-metric-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sfs-metric-track {
+  height: 6px;
+  background: var(--color-neutral-200);
+  overflow: hidden;
+}
+
+.sfs-metric-fill {
+  height: 100%;
+}
+
+.sfs-metric-range {
+  font-size: 10.5px;
+  margin-top: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.sfs-dialog-foot {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* --- History modal ----------------------------------------------------------
+   Same "1px divider-bleed" list treatment as `.sfs-leader-list` above — one
+   scrollable list of clickable rows, each with a trailing delete action. */
+
+.sfs-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--color-divider);
+  border: 1px solid var(--color-divider);
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.sfs-history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--color-surface);
+}
+
+.sfs-history-row-current {
+  background: var(--color-accent-100);
+}
+
+.sfs-history-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: none;
+  padding: var(--space-3);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+.sfs-history-row-main:hover {
+  background: color-mix(in srgb, var(--color-text) 7%, transparent);
+}
+
+.sfs-history-row-query {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.sfs-history-row-time {
+  font-size: 11px;
+}
+
+.sfs-history-row .btn-icon {
+  flex-shrink: 0;
+  margin-right: var(--space-2);
+}
+
+/* --- Utility --------------------------------------------------------------- */
+
+.sfs-empty {
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Visually hidden but available to screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
