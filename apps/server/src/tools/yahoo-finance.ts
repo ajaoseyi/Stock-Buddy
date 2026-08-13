@@ -540,3 +540,205 @@ export async function fetchCompanySector(ticker: string): Promise<AssetProfileRe
     },
   });
 }
+
+// =============================================================================
+// SECTION 7 — Combined fundamentals snapshot (company-snapshot capability, §13)
+// =============================================================================
+
+/**
+ * The four `quoteSummary` modules company-snapshot needs, narrowed to the
+ * fields §13.3/§13.5/§13.6 actually read. Field names/presence verified
+ * against the installed `yahoo-finance2` package's own
+ * `quoteSummary-iface.d.ts` (not assumed from a tutorial) — every field below
+ * exists on the real interface.
+ *
+ * Note `trailingPE`/`forwardPE` live on `summaryDetail`, NOT
+ * `defaultKeyStatistics`, even though a `forwardPE` field also happens to
+ * exist there — `summaryDetail`'s copy is the one used, for one consistent
+ * source per metric.
+ */
+export const SummaryDetailSchema = z.object({
+  trailingPE: z.number().optional(),
+  forwardPE: z.number().optional(),
+  marketCap: z.number().optional(),
+  dividendYield: z.number().optional(),
+  beta: z.number().optional(),
+  fiftyTwoWeekLow: z.number().optional(),
+  fiftyTwoWeekHigh: z.number().optional(),
+});
+
+export const DefaultKeyStatisticsSchema = z.object({
+  enterpriseValue: z.number().optional(),
+  priceToBook: z.number().optional(),
+  sharesOutstanding: z.number().optional(),
+  trailingEps: z.number().optional(),
+  forwardEps: z.number().optional(),
+});
+
+export const FinancialDataSchema = z.object({
+  debtToEquity: z.number().optional(),
+  currentRatio: z.number().optional(),
+  returnOnEquity: z.number().optional(),
+  returnOnAssets: z.number().optional(),
+  profitMargins: z.number().optional(),
+  ebitda: z.number().optional(),
+  freeCashflow: z.number().optional(),
+  totalRevenue: z.number().optional(),
+  /** Yahoo's own trailing revenue-growth figure — §13.3 keeps this labelled distinctly from `revenueGrowth.revenueGrowthPct`. */
+  revenueGrowth: z.number().optional(),
+  targetMeanPrice: z.number().optional(),
+  recommendationKey: z.string().optional(),
+});
+
+/**
+ * `assetProfile`'s slice for this capability. A separate, narrower schema
+ * than `AssetProfileResponseSchema` above (which growth-authenticity's
+ * `sector-benchmark.ts` uses) because this capability additionally needs
+ * `fullTimeEmployees` — kept as its own schema rather than widening the
+ * existing one, so a change here cannot ripple into growth-authenticity.
+ */
+export const CompanyAssetProfileSchema = z.object({
+  sector: z.string().optional(),
+  industry: z.string().optional(),
+  fullTimeEmployees: z.number().optional(),
+});
+
+export const CompanyFundamentalsSnapshotSchema = z.object({
+  assetProfile: CompanyAssetProfileSchema,
+  summaryDetail: SummaryDetailSchema,
+  defaultKeyStatistics: DefaultKeyStatisticsSchema,
+  financialData: FinancialDataSchema,
+});
+
+export type CompanyFundamentalsSnapshot = z.infer<typeof CompanyFundamentalsSnapshotSchema>;
+
+/**
+ * One combined `quoteSummary` call per ticker, covering everything
+ * `company-profile.ts`/`valuation-metrics.ts`/`financial-health.ts` (§13.3,
+ * §13.5, §13.6) need. Cheaper than four separate calls for the same modules.
+ *
+ * Cached under `company_fundamentals_snapshot` → 24h TTL (§6, §13.2a).
+ *
+ * A ticker with no coverage for a module (thin listing, ADR) still returns a
+ * valid (mostly-empty) object rather than throwing — each module defaults to
+ * `{}` exactly as `fetchCompanySector` above already does for `assetProfile`,
+ * so downstream compute functions see `undefined` fields and degrade
+ * per-field (§13.10), never a crash.
+ */
+export async function fetchCompanyFundamentalsSnapshot(
+  ticker: string,
+): Promise<CompanyFundamentalsSnapshot> {
+  return withCache({
+    source: SOURCE,
+    endpoint: "quoteSummary.snapshot",
+    params: { symbol: ticker },
+    namespace: "company_fundamentals_snapshot",
+    schema: CompanyFundamentalsSnapshotSchema,
+    fetcher: async () => {
+      const response = await yf.quoteSummary(ticker, {
+        modules: ["assetProfile", "summaryDetail", "defaultKeyStatistics", "financialData"],
+      });
+      return {
+        assetProfile: response.assetProfile ?? {},
+        summaryDetail: response.summaryDetail ?? {},
+        defaultKeyStatistics: response.defaultKeyStatistics ?? {},
+        financialData: response.financialData ?? {},
+      };
+    },
+  });
+}
+
+// =============================================================================
+// SECTION 8 — Company-name → ticker resolution (supervisor.ts)
+// =============================================================================
+
+/**
+ * The narrow slice of `search()`'s quote union this file actually reads.
+ * Non-Yahoo (Crunchbase) results have no `symbol`/`quoteType` and are simply
+ * not matched by `symbolAppearsIn` below, so they do not need a schema case
+ * here — `.passthrough()` keeps them from failing validation outright while
+ * every field this module reads stays optional.
+ */
+const SearchQuoteSchema = z
+  .object({
+    symbol: z.string().optional(),
+    quoteType: z.string().optional(),
+  })
+  .passthrough();
+
+const SearchResultSchema = z
+  .object({
+    quotes: z.array(SearchQuoteSchema),
+  })
+  .passthrough();
+
+/** Quote types accepted as a valid ticker resolution — equities and ETFs only. */
+const RESOLVABLE_QUOTE_TYPES = new Set(["EQUITY", "ETF"]);
+
+async function searchSymbols(query: string): Promise<z.infer<typeof SearchResultSchema>> {
+  return withCache({
+    source: SOURCE,
+    endpoint: "search",
+    params: { query },
+    namespace: "ticker_lookup",
+    schema: SearchResultSchema,
+    fetcher: () => yf.search(query),
+  });
+}
+
+function symbolAppearsIn(
+  result: z.infer<typeof SearchResultSchema>,
+  symbol: string,
+  requireResolvableType: boolean,
+): boolean {
+  return result.quotes.some(
+    (quote) =>
+      quote.symbol?.toUpperCase() === symbol.toUpperCase() &&
+      (!requireResolvableType ||
+        (quote.quoteType !== undefined && RESOLVABLE_QUOTE_TYPES.has(quote.quoteType))),
+  );
+}
+
+/**
+ * Verify an LLM-guessed ticker for a company name mentioned in a user
+ * message (supervisor.ts §"company mentions"). The LLM never gets to be the
+ * sole source of truth for an identifier downstream code treats as ground
+ * truth (CLAUDE.md §9) — this is the deterministic check.
+ *
+ * Requires TWO INDEPENDENT corroborations before trusting the guess:
+ *   1. Searching the guessed symbol directly returns a quote with that exact
+ *      symbol, typed as an equity or ETF (rules out a stale/delisted symbol
+ *      or a non-tradeable result).
+ *   2. Searching the company NAME independently also surfaces that same
+ *      symbol — i.e. Yahoo's own name-matching agrees with the guess, not
+ *      just the guess's own existence.
+ *
+ * Either check alone is not enough: (1) alone would accept a real but wrong
+ * ticker (the model naming an unrelated company that happens to trade);
+ * (2) alone would accept a symbol that doesn't actually exist under that
+ * name. Failing either degrades to `null` — never a low-confidence guess —
+ * for the caller to log and skip (the "a missing signal is honest" principle
+ * already established for this codebase's other capabilities).
+ */
+export async function resolveCompanyTicker(
+  companyName: string,
+  guessedTicker: string,
+): Promise<{ symbol: string; name: string } | null> {
+  const [bySymbol, byName] = await Promise.all([
+    searchSymbols(guessedTicker),
+    searchSymbols(companyName),
+  ]);
+
+  if (!symbolAppearsIn(bySymbol, guessedTicker, true)) return null;
+  if (!symbolAppearsIn(byName, guessedTicker, false)) return null;
+
+  const symbolMatch = bySymbol.quotes.find(
+    (quote) => quote.symbol?.toUpperCase() === guessedTicker.toUpperCase(),
+  )!;
+  const symbol = symbolMatch.symbol!.toUpperCase();
+  const name =
+    (typeof symbolMatch["longname"] === "string" ? symbolMatch["longname"] : undefined) ??
+    (typeof symbolMatch["shortname"] === "string" ? symbolMatch["shortname"] : undefined) ??
+    companyName;
+  return { symbol, name };
+}

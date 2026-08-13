@@ -15,9 +15,14 @@ import type {
   GrowthAuthenticityResult,
   SectorLeader,
   SectorRanking,
+  TechnicalAnalysisResult,
 } from "../../src/state.js";
 import { setLlmForTesting } from "../../src/llm.js";
-import { buildDataBlock, reportWriterNode } from "../../src/nodes/report-writer.js";
+import {
+  buildDataBlock,
+  buildTechnicalAnalysisDataBlock,
+  reportWriterNode,
+} from "../../src/nodes/report-writer.js";
 
 const GROWTH_AUTHENTICITY: GrowthAuthenticityResult = {
   ticker: "APA",
@@ -53,6 +58,14 @@ const GROWTH_AUTHENTICITY: GrowthAuthenticityResult = {
     "inorganic_signal:no_signal",
     "macro_beta:beta_explained",
   ],
+};
+
+const GROWTH_AUTHENTICITY_COST: GrowthAuthenticityResult = {
+  ...GROWTH_AUTHENTICITY,
+  ticker: "COST",
+  revenueGrowth: { ...GROWTH_AUTHENTICITY.revenueGrowth, ticker: "COST", revenueGrowthPct: 9.4 },
+  classification: "organic_growth_supported",
+  classificationReasonCodes: ["discrepancy:aligned"],
 };
 
 const RANKINGS: SectorRanking[] = [
@@ -93,6 +106,35 @@ const LEADERS: Record<string, SectorLeader[]> = {
   ],
 };
 
+const TECHNICAL_ANALYSIS: TechnicalAnalysisResult = {
+  symbol: "NVDA",
+  requestedAs: "ticker",
+  sectorName: null,
+  timeWindow: "3mo",
+  indicators: {
+    sma20: 140.2,
+    sma50: 132.5,
+    sma200: 115.8,
+    ema12: 141.1,
+    ema26: 136.4,
+    rsi14: 58.3,
+    macd: { macdLine: 2.1, signalLine: 1.7, histogram: 0.4 },
+    atr14: 4.2,
+    bollinger: { middle: 140.2, upper: 150.1, lower: 130.3 },
+    latestClose: 142.5,
+    asOfDate: "2026-08-01",
+  },
+  trendDirection: "uptrend",
+  momentumDirection: "neutral",
+  volatilityLevel: "normal",
+  supportLevels: [{ price: 135.0, kind: "support", touches: 3 }],
+  resistanceLevels: [{ price: 150.0, kind: "resistance", touches: 2 }],
+  atrLevels: { entry: 135.0, stopLoss: 128.7, takeProfit: 147.6, basisNote: "ATR-based." },
+  swingLevels: { entry: 135.0, stopLoss: 133.1, takeProfit: 150.0, basisNote: "Swing-based." },
+  stance: "bullish_setup",
+  stanceReasonCodes: ["trend:uptrend", "momentum:neutral"],
+};
+
 function stateWith(overrides: Partial<AgentState> = {}): AgentState {
   return {
     messages: [],
@@ -104,12 +146,20 @@ function stateWith(overrides: Partial<AgentState> = {}): AgentState {
     sectorRankings: RANKINGS,
     sectorLeaders: LEADERS,
     trendDataErrors: [],
+    partialHoldingsSectors: [],
     revenueGrowth: null,
     priceRevenueDiscrepancy: null,
     inorganicSignal: null,
     sectorBenchmark: null,
     growthAuthenticity: null,
     growthCheckErrors: [],
+    portfolioGrowthResults: null,
+    tickerComparison: null,
+    portfolioScanErrors: [],
+    companySnapshots: null,
+    companySnapshotErrors: [],
+    technicalAnalysis: null,
+    technicalAnalysisErrors: [],
     dataErrors: [],
     draftReport: null,
     validationPassed: false,
@@ -181,8 +231,10 @@ describe("buildDataBlock — what the model is allowed to see", () => {
       (l: { quadrant: string }) => l.quadrant,
     );
 
-    expect(order[0]).toBe("anchor_leader");
-    expect(order[1]).toBe("emerging_mover");
+    // Quadrant is presented to the model as a natural-language label, never
+    // the raw snake_case identifier, so the model never echoes it verbatim.
+    expect(order[0]).toBe("an anchor leader (large weight, high speed)");
+    expect(order[1]).toBe("an emerging mover (small weight, high speed)");
   });
 
   // Every extra row is another number the model might quote and the validator
@@ -201,6 +253,38 @@ describe("buildDataBlock — what the model is allowed to see", () => {
 
     expect(block.sectorRankings).toEqual([]);
     expect(block.sectorLeaders).toEqual({});
+  });
+
+  // The bug this capability shipped with: a named sector's DATA block still
+  // carried every other ranked sector, so the report recited sectors nobody
+  // asked about (Materials/Utilities alongside a "tech sector" question).
+  describe("requestedSectors — scoping to the sector(s) actually asked about", () => {
+    it("keeps only the requested sector's ranking", () => {
+      const block = JSON.parse(buildDataBlock(RANKINGS, LEADERS, "1mo", ["Information Technology"]));
+
+      expect(block.sectorRankings).toHaveLength(1);
+      expect(block.sectorRankings[0].sector).toBe("Information Technology");
+    });
+
+    it("keeps only the requested sector's leaders", () => {
+      const block = JSON.parse(buildDataBlock(RANKINGS, LEADERS, "1mo", ["Information Technology"]));
+
+      expect(Object.keys(block.sectorLeaders)).toEqual(["Information Technology"]);
+    });
+
+    it("drops a sector entirely when it was not requested", () => {
+      const block = JSON.parse(buildDataBlock(RANKINGS, LEADERS, "1mo", ["Information Technology"]));
+
+      expect(block.sectorRankings.some((r: { sector: string }) => r.sector === "Materials")).toBe(
+        false,
+      );
+    });
+
+    it("keeps every sector when no sector was requested (unchanged default behaviour)", () => {
+      const block = JSON.parse(buildDataBlock(RANKINGS, LEADERS, "1mo", []));
+
+      expect(block.sectorRankings).toHaveLength(2);
+    });
   });
 });
 
@@ -272,6 +356,107 @@ describe("reportWriterNode — prompt construction", () => {
     expect(prompt).toContain("is APA's growth backed by revenue or just oil prices?");
   });
 
+  it("instructs the model not to silently drop an unanswerable forecast request (§1)", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(stateWith());
+
+    const system = String(invoke.mock.calls[0]![0]![0]!.content);
+    expect(system).toMatch(/forecast of a FUTURE price/i);
+    expect(system).toMatch(/do NOT open the report with that limitation/i);
+  });
+
+  it("scopes the sector_trend prompt to only the requested sector's data", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({
+        sectors: ["Information Technology"],
+        messages: [new HumanMessage("what stocks should i buy in the tech sector")],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("MSFT");
+    expect(prompt).not.toContain("Materials");
+    // The forced "Trending up"/"Trending down" structure no longer applies
+    // once the DATA block has been scoped to one sector.
+    expect(prompt).not.toMatch(/"Trending down"/);
+  });
+
+  it("keeps the full trending-up/trending-down structure when no sector was named", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({ messages: [new HumanMessage("what sectors are trending this month?")] }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/"Trending down"/);
+  });
+
+  describe("quota-compromised gate — declines to narrate a sector with degraded holdings data", () => {
+    it("skips the LLM call when the requested sector's holdings are partial", async () => {
+      const invoke = fakeLlm();
+
+      const result = await reportWriterNode(
+        stateWith({
+          sectors: ["Information Technology"],
+          partialHoldingsSectors: ["Information Technology"],
+          messages: [new HumanMessage("what stocks should i buy in the tech sector")],
+        }),
+      );
+
+      expect(invoke).not.toHaveBeenCalled();
+      expect(result.finalReport).toMatch(/Information Technology/);
+      expect(result.finalReport).toMatch(/quota is exhausted/i);
+      expect(result.validationPassed).toBe(true);
+      expect(result.draftReport).toBe(result.finalReport);
+    });
+
+    it("still calls the LLM when unscoped, even with a partial sector in state", async () => {
+      const invoke = fakeLlm();
+
+      await reportWriterNode(
+        stateWith({
+          sectors: [],
+          partialHoldingsSectors: ["Information Technology"],
+          messages: [new HumanMessage("what sectors are trending this month?")],
+        }),
+      );
+
+      expect(invoke).toHaveBeenCalled();
+    });
+
+    it("still calls the LLM when the partial sector isn't the one requested", async () => {
+      const invoke = fakeLlm();
+
+      await reportWriterNode(
+        stateWith({
+          sectors: ["Information Technology"],
+          partialHoldingsSectors: ["Materials"],
+          messages: [new HumanMessage("what stocks should i buy in the tech sector")],
+        }),
+      );
+
+      expect(invoke).toHaveBeenCalled();
+    });
+
+    it("still calls the LLM when no sector's holdings are partial", async () => {
+      const invoke = fakeLlm();
+
+      await reportWriterNode(
+        stateWith({
+          sectors: ["Information Technology"],
+          partialHoldingsSectors: [],
+          messages: [new HumanMessage("what stocks should i buy in the tech sector")],
+        }),
+      );
+
+      expect(invoke).toHaveBeenCalled();
+    });
+  });
+
   it("includes data caveats when the capability degraded", async () => {
     const invoke = fakeLlm();
 
@@ -280,6 +465,70 @@ describe("reportWriterNode — prompt construction", () => {
     const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
     expect(prompt).toMatch(/DATA CAVEATS/);
     expect(prompt).toContain("emerging_mover suppressed for AVGO");
+  });
+
+  // The bug this shipped with: a report scoped to Information Technology
+  // still narrated "cross-checks for Real Estate/Utilities were unavailable"
+  // as a caveat — true, but about sectors nobody asked about.
+  it("drops caveats about a different, unrequested sector once scoped", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({
+        sectors: ["Information Technology"],
+        trendDataErrors: [
+          "Real Estate (XLRE): cross-check unavailable — quota exhausted. Using Yahoo Finance only.",
+        ],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).not.toMatch(/DATA CAVEATS/);
+    expect(prompt).not.toContain("Real Estate");
+  });
+
+  it("keeps a caveat that names the requested sector once scoped", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({
+        sectors: ["Information Technology"],
+        trendDataErrors: ["Information Technology (XLK): sources disagree — treat with caution."],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/DATA CAVEATS/);
+    expect(prompt).toContain("Information Technology (XLK): sources disagree");
+  });
+
+  it("keeps a sector-agnostic caveat once scoped (no sector named in the note)", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({
+        sectors: ["Information Technology"],
+        trendDataErrors: ["Alpha Vantage cross-check skipped: insufficient daily quota for 6 sectors."],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("insufficient daily quota");
+  });
+
+  it("keeps every caveat when unscoped (no sector named in the question)", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({
+        trendDataErrors: [
+          "Real Estate (XLRE): cross-check unavailable — quota exhausted. Using Yahoo Finance only.",
+        ],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("Real Estate");
   });
 
   it("increments retryCount so the graph can bound the loop", async () => {
@@ -332,8 +581,13 @@ describe("reportWriterNode — unimplemented capabilities (§9)", () => {
   it("answers honestly rather than fabricating an analysis", async () => {
     const invoke = fakeLlm();
 
+    // `single_report` with no ticker extracted: the LLM classifier is not
+    // bound by the regex fallback's `tickers.length > 0` requirement, so this
+    // combination is still reachable, unlike a genuinely unimplemented intent
+    // (there is no longer one — sector_trend/single_report/portfolio_scan run
+    // capabilities, followup reuses data, general_chat chats).
     const result = await reportWriterNode(
-      stateWith({ intent: "portfolio_scan", activeCapabilities: [] }),
+      stateWith({ intent: "single_report", activeCapabilities: [] }),
     );
 
     expect(result.finalReport).toMatch(/outside what this agent can currently analyse/);
@@ -346,6 +600,28 @@ describe("reportWriterNode — unimplemented capabilities (§9)", () => {
 
     // Otherwise the validator would reject it for citing no figures and burn
     // the whole retry budget on a message that is already correct.
+    expect(result.validationPassed).toBe(true);
+  });
+});
+
+// =============================================================================
+describe("reportWriterNode — portfolio_scan with no ticker named (§12.2)", () => {
+  it("asks for tickers rather than falling back to the generic stub", async () => {
+    const invoke = fakeLlm();
+
+    const result = await reportWriterNode(
+      stateWith({ intent: "portfolio_scan", activeCapabilities: [], tickers: [] }),
+    );
+
+    expect(result.finalReport).toMatch(/need at least one to check/);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("marks the honest refusal as validated so the graph terminates", async () => {
+    const result = await reportWriterNode(
+      stateWith({ intent: "portfolio_scan", activeCapabilities: [], tickers: [] }),
+    );
+
     expect(result.validationPassed).toBe(true);
   });
 });
@@ -427,6 +703,28 @@ describe("reportWriterNode — followup", () => {
     expect(prompt).toContain("Information Technology");
   });
 
+  it("prefers technicalAnalysis over companySnapshots/growthAuthenticity when a ticker is named and all three are present", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      stateWith({
+        intent: "followup",
+        activeCapabilities: [],
+        tickers: ["NVDA"],
+        growthAuthenticity: GROWTH_AUTHENTICITY,
+        companySnapshots: [
+          { ticker: "NVDA", timeWindow: "1y", profile: null, valuation: null, financialHealth: null },
+        ],
+        technicalAnalysis: [TECHNICAL_ANALYSIS],
+        messages: [new HumanMessage("and what's my stop loss?")],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("128.7"); // technical-analysis's ATR stop-loss
+    expect(prompt).not.toContain("Information Technology");
+  });
+
   it("answers honestly with no LLM call when there is nothing to follow up on yet", async () => {
     const invoke = fakeLlm();
 
@@ -444,6 +742,188 @@ describe("reportWriterNode — followup", () => {
     expect(result.finalReport).toMatch(/no earlier analysis in this conversation/);
     expect(result.validationPassed).toBe(true);
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+describe("reportWriterNode — portfolio_scan (§12.5)", () => {
+  function portfolioState(overrides: Partial<AgentState> = {}): AgentState {
+    return stateWith({
+      intent: "portfolio_scan",
+      activeCapabilities: ["portfolio_scan"],
+      tickers: ["APA", "COST"],
+      sectorRankings: null,
+      sectorLeaders: null,
+      portfolioGrowthResults: [GROWTH_AUTHENTICITY, GROWTH_AUTHENTICITY_COST],
+      ...overrides,
+    });
+  }
+
+  it("passes every analysed ticker's figures into the prompt", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(portfolioState());
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("APA");
+    expect(prompt).toContain("COST");
+    expect(prompt).toContain("38.5"); // APA's priceChangePct
+    expect(prompt).toContain("9.4"); // COST's revenueGrowthPct
+  });
+
+  it("threads the user's literal question into the prompt", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      portfolioState({
+        messages: [new HumanMessage("are APA and COST both growing for real?")],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("are APA and COST both growing for real?");
+  });
+
+  it("absolutely forbids a combined portfolio score (§12.1/§12.5)", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(portfolioState());
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/never compute, state, or imply a combined "portfolio score"/i);
+  });
+
+  it("includes portfolioScanErrors as data caveats", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      portfolioState({ portfolioScanErrors: ["skipped GOOG — over the 5-ticker cap"] }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/DATA CAVEATS/);
+    expect(prompt).toContain("skipped GOOG");
+  });
+});
+
+// =============================================================================
+describe("buildTechnicalAnalysisDataBlock — what the model is allowed to see (§14)", () => {
+  it("keeps the ATR-based and swing-based levels as two separate top-level keys", () => {
+    const block = JSON.parse(buildTechnicalAnalysisDataBlock([TECHNICAL_ANALYSIS], "3mo"));
+    const entry = block.results[0];
+
+    expect(entry.atrBasedLevels.stopLoss).toBe(128.7);
+    expect(entry.swingBasedLevels.stopLoss).toBe(133.1);
+    // Never merged into one "levels" object.
+    expect(Object.keys(entry)).not.toContain("levels");
+  });
+
+  it("includes the computed stance and both trend/momentum flags as natural-language labels", () => {
+    const block = JSON.parse(buildTechnicalAnalysisDataBlock([TECHNICAL_ANALYSIS], "3mo"));
+    // Presented as plain English, never the raw snake_case identifier, so the
+    // model never echoes it verbatim into the report.
+    expect(block.results[0].stance).toBe("a bullish setup");
+    expect(block.results[0].trendDirection).toBe("an uptrend");
+    expect(block.results[0].momentumDirection).toBe("neutral");
+  });
+
+  it("handles null capability output without throwing", () => {
+    const block = JSON.parse(buildTechnicalAnalysisDataBlock(null, "3mo"));
+    expect(block.results).toEqual([]);
+  });
+});
+
+// =============================================================================
+describe("reportWriterNode — technical_analysis (§14.12)", () => {
+  function technicalAnalysisState(overrides: Partial<AgentState> = {}): AgentState {
+    return stateWith({
+      intent: "technical_analysis",
+      activeCapabilities: ["technical_analysis"],
+      tickers: ["NVDA"],
+      sectorRankings: null,
+      sectorLeaders: null,
+      technicalAnalysis: [TECHNICAL_ANALYSIS],
+      ...overrides,
+    });
+  }
+
+  it("passes the computed levels and indicators into the prompt", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(technicalAnalysisState());
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("NVDA");
+    expect(prompt).toContain("128.7"); // ATR stop-loss
+    expect(prompt).toContain("133.1"); // swing stop-loss
+  });
+
+  it("instructs the model to always present the two methodologies as separate sections", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(technicalAnalysisState());
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/TWO SEPARATE, clearly labelled sections/i);
+    expect(prompt).toMatch(/Never merge them/i);
+  });
+
+  it("instructs the model to prefix every price level with a dollar sign", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(technicalAnalysisState());
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/prefix every specific price level.*"\$"/is);
+  });
+
+  it("threads the user's literal question into the prompt", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      technicalAnalysisState({
+        messages: [new HumanMessage("give me an entry point and stop loss for NVDA")],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toContain("give me an entry point and stop loss for NVDA");
+  });
+
+  it("includes technicalAnalysisErrors as data caveats", async () => {
+    const invoke = fakeLlm();
+
+    await reportWriterNode(
+      technicalAnalysisState({
+        technicalAnalysisErrors: ["NVDA: only 12 usable daily bars available"],
+      }),
+    );
+
+    const prompt = String(invoke.mock.calls[0]![0]![1]!.content);
+    expect(prompt).toMatch(/DATA CAVEATS/);
+    expect(prompt).toContain("only 12 usable daily bars");
+  });
+});
+
+// =============================================================================
+describe("reportWriterNode — technical_analysis with no ticker/sector named (§14)", () => {
+  it("asks for a ticker or sector rather than falling back to the generic stub", async () => {
+    const invoke = fakeLlm();
+
+    const result = await reportWriterNode(
+      stateWith({ intent: "technical_analysis", activeCapabilities: [], tickers: [] }),
+    );
+
+    expect(result.finalReport).toMatch(/need at least one to check/);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("marks the honest refusal as validated so the graph terminates", async () => {
+    const result = await reportWriterNode(
+      stateWith({ intent: "technical_analysis", activeCapabilities: [], tickers: [] }),
+    );
+
+    expect(result.validationPassed).toBe(true);
   });
 });
 

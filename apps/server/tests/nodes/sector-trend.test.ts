@@ -52,12 +52,20 @@ function makeState(overrides: Partial<AgentState> = {}): AgentState {
     sectorRankings: null,
     sectorLeaders: null,
     trendDataErrors: [],
+    partialHoldingsSectors: [],
     revenueGrowth: null,
     priceRevenueDiscrepancy: null,
     inorganicSignal: null,
     sectorBenchmark: null,
     growthAuthenticity: null,
     growthCheckErrors: [],
+    portfolioGrowthResults: null,
+    tickerComparison: null,
+    portfolioScanErrors: [],
+    companySnapshots: null,
+    companySnapshotErrors: [],
+    technicalAnalysis: null,
+    technicalAnalysisErrors: [],
     dataErrors: [],
     draftReport: null,
     validationPassed: false,
@@ -441,6 +449,33 @@ describe("sectorTrendNode — cross-check provenance (§5.3, §5.8a)", () => {
     expect(result.trendDataErrors!.join(" ")).toMatch(/quota exhausted during cross-check/);
   });
 
+  // REGRESSION: every real call to `fetchDailySeries` goes through
+  // `tools/cache.ts::withCache`, which rethrows a fetcher failure as a plain
+  // `Error` ("<source>/<endpoint> request failed: ...") with the original on
+  // `.cause` — a live `AlphaVantageApiError` never reaches this code as
+  // itself. A bare `instanceof AlphaVantageApiError` check (what this used to
+  // be) is therefore always false in production, so quota exhaustion was
+  // never detected: the loop kept burning calls it would only fail, and each
+  // failure appended Alpha Vantage's raw rate-limit response — a paragraph of
+  // upsell copy — straight into a user-facing report. This reproduces that
+  // wrapping shape directly, the way `withCache` actually produces it.
+  it("detects quota exhaustion through withCache's error wrapping, with no raw vendor text", async () => {
+    const wrapped = new Error("alpha_vantage/TIME_SERIES_DAILY request failed: rate limit reached", {
+      cause: new AlphaVantageApiError(
+        "Thank you for using Alpha Vantage! Please consider spreading out your API requests.",
+        true,
+      ),
+    });
+    mocks.fetchDailySeries.mockResolvedValueOnce(avSeries(108.3)).mockRejectedValue(wrapped);
+
+    const result = await sectorTrendNode(makeState(), NOW);
+
+    expect(mocks.fetchDailySeries).toHaveBeenCalledTimes(2);
+    const notes = result.trendDataErrors!.join(" ");
+    expect(notes).toMatch(/quota exhausted during cross-check/);
+    expect(notes).not.toMatch(/Thank you for using Alpha Vantage/);
+  });
+
   // ---------------------------------------------------------------------------
   // REGRESSION: the cross-check must compare the SAME period at BOTH ends.
   //
@@ -532,5 +567,22 @@ describe("sectorTrendNode — cross-check provenance (§5.3, §5.8a)", () => {
 
     expect(result.sectorRankings).toHaveLength(11);
     expect(result.trendDataErrors!.join(" ")).toMatch(/cross-check unavailable.*DNS failure/);
+  });
+
+  // A non-rate-limit AlphaVantageApiError (e.g. a malformed/empty response)
+  // still has a short, code-authored message worth showing — unlike the
+  // rate-limit case, unwrapping it here should PREFER that clean message over
+  // the generic wrapper's "<source>/<endpoint> request failed: " prefix.
+  it("prefers the unwrapped AV error's own message over the cache wrapper's prefix", async () => {
+    const wrapped = new Error("alpha_vantage/TIME_SERIES_DAILY request failed: Empty response body.", {
+      cause: new AlphaVantageApiError("Empty response body — the endpoint is likely retired.", false),
+    });
+    mocks.fetchDailySeries.mockRejectedValue(wrapped);
+
+    const result = await sectorTrendNode(makeState(), NOW);
+
+    expect(result.trendDataErrors!.join(" ")).toMatch(
+      /cross-check unavailable — Empty response body — the endpoint is likely retired\./,
+    );
   });
 });

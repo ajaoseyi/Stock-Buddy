@@ -29,7 +29,7 @@
  * APA-shaped case that motivated this capability) with large regular capex
  * swings, and too loose to ever catch anything for asset-light companies whose
  * normal PP&E movement is near zero. Each of goodwill/PP&E/cash is instead
- * z-scored (robust median/MAD, see ./stats.ts) against THIS company's own
+ * z-scored (robust median/MAD, see ../../../lib/stats.ts) against THIS company's own
  * trailing QoQ deltas.
  */
 
@@ -40,7 +40,7 @@ import {
   fetchQuarterlyBalanceSheet,
   type QuarterlyBalanceSheetRow,
 } from "../../../tools/yahoo-finance.js";
-import { ROBUST_Z_THRESHOLD, robustZScore } from "./stats.js";
+import { ROBUST_Z_THRESHOLD, robustZScore } from "../../../lib/stats.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

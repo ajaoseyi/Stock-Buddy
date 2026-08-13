@@ -23,10 +23,7 @@ import { priceRevenueDiscrepancyNode } from "../src/nodes/capabilities/growth-au
 import { inorganicSignalNode } from "../src/nodes/capabilities/growth-authenticity/inorganic-signal.js";
 import { sectorBenchmarkNode } from "../src/nodes/capabilities/growth-authenticity/sector-benchmark.js";
 import { growthClassificationNode } from "../src/nodes/capabilities/growth-authenticity/growth-classification.js";
-import {
-  ROBUST_Z_THRESHOLD,
-  MIN_BASELINE_QUARTERS,
-} from "../src/nodes/capabilities/growth-authenticity/stats.js";
+import { ROBUST_Z_THRESHOLD, MIN_BASELINE_QUARTERS } from "../src/lib/stats.js";
 
 async function calibrate(ticker: string): Promise<void> {
   console.log(`\n${"=".repeat(70)}\n${ticker}\n${"=".repeat(70)}`);

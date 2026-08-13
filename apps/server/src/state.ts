@@ -313,6 +313,238 @@ export const GrowthAuthenticityResultSchema = z.object({
   classificationReasonCodes: z.array(z.string()),
 });
 
+// -----------------------------------------------------------------------------
+// Ticker-comparison sub-schemas (CLAUDE.md §12.8).
+//
+// Produced by `nodes/capabilities/portfolio-scan/ticker-comparison.ts` when
+// `portfolio_scan` runs with 2+ tickers. This is the ONE place §9.1's narrow
+// blending carve-out applies — `overallVerdict` is a fixed rank-count decision
+// table over already-verified numbers (never an arithmetic blend of the
+// values themselves), and `metricRanks` keeps every underlying value fully
+// disaggregated alongside it, so the verdict augments rather than replaces
+// the disaggregated view.
+// -----------------------------------------------------------------------------
+
+/**
+ * One comparison metric's values across all compared tickers, plus which
+ * ticker (if any) "won" it. `winner` is `null` when the metric wasn't
+ * comparable (a ticker was missing a value) or tied within tolerance — never
+ * forced to pick one (§12.8 step 2-3).
+ */
+export const TickerMetricRankSchema = z.object({
+  /** e.g. "revenue_growth_pct", "trailing_pe". See COMPARISON_METRICS in ticker-comparison.ts. */
+  metric: z.string(),
+  /** Whether a HIGHER value is favourable for this metric (false for valuation multiples and debt/equity). */
+  higherIsBetter: z.boolean(),
+  /** This metric's raw value for every compared ticker, in the same order as `TickerComparisonResult.tickers`. */
+  values: z.array(z.object({ ticker: z.string(), value: z.number().nullable() })),
+  /** The ticker with the more favourable value, or null if not comparable / tied. */
+  winner: z.string().nullable(),
+});
+
+/**
+ * The fixed decision-table output (§12.8 steps 5-9). `strongerTicker` is
+ * narrated by the report writer verbatim — it never re-derives or overrides
+ * this (§9.1).
+ */
+export const TickerOverallVerdictSchema = z.object({
+  verdict: z.enum(["clear_lead", "narrow_lead", "no_clear_leader", "insufficient_comparable_data"]),
+  strongerTicker: z.string().nullable(),
+  /** How many comparable metrics each ticker won. Keyed by ticker. */
+  winCounts: z.record(z.string(), z.number()),
+  /** How many of the 11 candidate metrics had a non-null value for every compared ticker. */
+  comparableMetricCount: z.number(),
+});
+
+export const TickerComparisonResultSchema = z.object({
+  tickers: z.array(z.string()),
+  metricRanks: z.array(TickerMetricRankSchema),
+  overallVerdict: TickerOverallVerdictSchema,
+});
+
+// -----------------------------------------------------------------------------
+// Company-snapshot sub-schemas (CLAUDE.md §13).
+//
+// Produced by `nodes/capabilities/company-snapshot/*`. Three compute functions
+// (company-profile.ts, valuation-metrics.ts, financial-health.ts) each own one
+// field of `CompanySnapshotResultSchema`, assembled by `company-snapshot-
+// scan.ts` — the same "each node owns exactly one field" discipline as
+// growth-authenticity, just via plain functions rather than graph nodes
+// (§13.7). Never blended into one "valuation score"/"health score" (§9,
+// unchanged by §9.1 — that carve-out applies only to §12.8's cross-ticker
+// verdict).
+// -----------------------------------------------------------------------------
+
+/** General company facts, unpeer-compared. From `company-profile.ts` (§13.3). */
+export const CompanyProfileFactsSchema = z.object({
+  /** Mapped GICS sector name, or null if unmapped/unavailable. */
+  sector: z.string().nullable(),
+  /** Yahoo's raw, unmapped industry string — more specific than `sector`. */
+  industry: z.string().nullable(),
+  marketCap: z.number().nullable(),
+  fullTimeEmployees: z.number().nullable(),
+  beta: z.number().nullable(),
+  dividendYieldPct: z.number().nullable(),
+  fiftyTwoWeekLow: z.number().nullable(),
+  fiftyTwoWeekHigh: z.number().nullable(),
+  trailingEps: z.number().nullable(),
+  forwardEps: z.number().nullable(),
+  analystTargetMeanPrice: z.number().nullable(),
+  analystRecommendationKey: z.string().nullable(),
+  /**
+   * Yahoo's OWN trailing revenue-growth figure (`financialData.revenueGrowth`).
+   * DELIBERATELY DISTINCT from `growthAuthenticity.revenueGrowth.revenueGrowthPct`
+   * (§11.3's own YoY-quarterly computation from raw `fundamentalsTimeSeries`
+   * data) — the two use different methodologies and CAN legitimately disagree.
+   * Never presented as the same number (§13.3, §13.8).
+   */
+  reportedRevenueGrowthPct: z.number().nullable(),
+});
+
+/**
+ * One metric compared against a bounded sector-peer sample, robust-z-scored.
+ * Shared shape for both valuation and financial-health metrics (§13.5/§13.6).
+ */
+export const PeerRelativeMetricSchema = z.object({
+  /** e.g. "trailing_pe", "debt_to_equity". */
+  metric: z.string(),
+  value: z.number().nullable(),
+  peerMedian: z.number().nullable(),
+  zScore: z.number().nullable(),
+  /** Whether a LOWER value is favourable (true for every valuation multiple and debt_to_equity). */
+  higherIsBetter: z.boolean(),
+  /**
+   * `"favorable_vs_peers"`/`"unfavorable_vs_peers"` mean "cheaper/more
+   * expensive than peers" for valuation metrics — NOT "good"/"bad" outright
+   * (§13.5: cheap is not unconditionally good). `"not_computable"` covers a
+   * missing value or too few peers to trust a z-score.
+   */
+  flag: z.enum(["favorable_vs_peers", "unfavorable_vs_peers", "in_line_with_peers", "not_computable"]),
+});
+
+export const ValuationMetricsResultSchema = z.object({
+  sector: z.string().nullable(),
+  peerCount: z.number(),
+  metrics: z.array(PeerRelativeMetricSchema),
+});
+
+export const FinancialHealthResultSchema = z.object({
+  sector: z.string().nullable(),
+  peerCount: z.number(),
+  metrics: z.array(PeerRelativeMetricSchema),
+});
+
+export const CompanySnapshotResultSchema = z.object({
+  ticker: z.string(),
+  timeWindow: z.string(),
+  profile: CompanyProfileFactsSchema.nullable(),
+  valuation: ValuationMetricsResultSchema.nullable(),
+  financialHealth: FinancialHealthResultSchema.nullable(),
+});
+
+// -----------------------------------------------------------------------------
+// Technical-analysis sub-schemas (CLAUDE.md §14).
+//
+// Produced by `nodes/capabilities/technical-analysis/*`. A single point-in-time
+// indicator snapshot, two independently-computed trade-level methodologies
+// (ATR-based and swing-based — NEVER merged into one "the stop-loss", the
+// same disaggregation discipline §5.4 already applies to weight/speed), and a
+// stance label from a fixed decision table over trend/momentum only.
+// -----------------------------------------------------------------------------
+
+/**
+ * Point-in-time indicator values, as of the latest available bar.
+ * PER-FIELD NULLABLE: `sma200` needs far more history than `rsi14`, so a
+ * ticker with, say, 60 usable bars can have a real `rsi14`/`sma20` while
+ * `sma200` stays `null` — the same per-field-null convention
+ * `CompanyProfileFactsSchema` already uses (§13.3), not an all-or-nothing
+ * object.
+ */
+export const IndicatorSnapshotSchema = z.object({
+  sma20: z.number().nullable(),
+  sma50: z.number().nullable(),
+  sma200: z.number().nullable(),
+  ema12: z.number().nullable(),
+  ema26: z.number().nullable(),
+  rsi14: z.number().nullable(),
+  macd: z.object({
+    macdLine: z.number().nullable(),
+    signalLine: z.number().nullable(),
+    histogram: z.number().nullable(),
+  }),
+  atr14: z.number().nullable(),
+  bollinger: z.object({
+    middle: z.number().nullable(),
+    upper: z.number().nullable(),
+    lower: z.number().nullable(),
+  }),
+  latestClose: z.number().nullable(),
+  /** ISO date (yyyy-mm-dd) of the latest bar the snapshot was computed from, or null if none. */
+  asOfDate: z.string().nullable(),
+});
+
+/**
+ * One merged support/resistance level. `kind` is decided relative to the
+ * CURRENT price at compute time (a level is "support" only because it
+ * currently sits below where the stock trades) — see
+ * `support-resistance.ts`'s header for why that classification cannot live in
+ * the price-agnostic `lib/technical-indicators.ts`.
+ */
+export const SupportResistanceLevelSchema = z.object({
+  price: z.number(),
+  kind: z.enum(["support", "resistance"]),
+  /** How many swing points merged into this level — a higher count is a more-tested level. */
+  touches: z.number(),
+});
+
+/**
+ * One trade-level methodology's independently-computed levels. Two of these
+ * exist per result (`atrLevels`, `swingLevels`) and are NEVER merged — the
+ * confirmed product decision behind this capability: both are always shown,
+ * both are single documented formulas over already-computed values (not a §9
+ * blend — see `trade-levels-atr.ts`'s header), and neither is presented as
+ * "the" stop-loss.
+ */
+export const TradeLevelsSchema = z.object({
+  entry: z.number().nullable(),
+  stopLoss: z.number().nullable(),
+  takeProfit: z.number().nullable(),
+  /** Human-readable note on what was/wasn't computable and why — e.g. which precondition was missing when a field is null. */
+  basisNote: z.string(),
+});
+
+export const TechnicalAnalysisResultSchema = z.object({
+  /** Ticker, or the sector's ETF ticker when `requestedAs === "sector_etf"`. */
+  symbol: z.string(),
+  requestedAs: z.enum(["ticker", "sector_etf"]),
+  /** Populated only when `requestedAs === "sector_etf"` — the GICS sector name the user actually named. */
+  sectorName: z.string().nullable(),
+  timeWindow: z.string(),
+  indicators: IndicatorSnapshotSchema,
+  trendDirection: z.enum(["uptrend", "downtrend", "sideways", "insufficient_data"]),
+  momentumDirection: z.enum(["overbought", "oversold", "neutral", "insufficient_data"]),
+  /**
+   * Context only — DELIBERATELY NOT an input to `stance` below. Same role
+   * `relativeVolume` plays relative to the weight/speed quadrant (§5.4): a
+   * secondary confirmation signal, never a classification input.
+   */
+  volatilityLevel: z.enum(["high", "normal", "low", "insufficient_data"]),
+  /** Nearest-first. */
+  supportLevels: z.array(SupportResistanceLevelSchema),
+  /** Nearest-first. */
+  resistanceLevels: z.array(SupportResistanceLevelSchema),
+  atrLevels: TradeLevelsSchema,
+  swingLevels: TradeLevelsSchema,
+  /**
+   * From `stance-classification.ts`'s fixed decision table over
+   * `trendDirection`/`momentumDirection` only (mirrors `classifyQuadrant`/
+   * `classifyGrowthAuthenticity` — a label, never a blend).
+   */
+  stance: z.enum(["bullish_setup", "bearish_setup", "neutral_no_setup", "insufficient_data"]),
+  /** Machine-readable citations, e.g. "trend:uptrend". */
+  stanceReasonCodes: z.array(z.string()),
+});
+
 // =============================================================================
 // SECTION 2 — The graph state schema
 // =============================================================================
@@ -378,20 +610,38 @@ export const AgentStateSchema = z.object({
    * routes to the growth-authenticity capability (single ticker, "why did this
    * stock move and is it real"); `portfolio_scan` routes to the portfolio-scan
    * capability (§12 of CLAUDE.md — multiple named tickers, or "my portfolio"
-   * phrasing, each classified independently). `followup` activates NO
-   * capability of its own — it reuses whatever capability output is already
-   * in state from an earlier turn in the same thread (`report-writer.ts`'s
-   * followup branch), only reachable when a prior analysis actually exists.
-   * `general_chat` is different in kind, not just capability-less — it is the
-   * honest classification for input that is not a finance question at all
-   * (small talk, "what can you do?"), and it DOES get a real LLM-generated
-   * reply from `report-writer.ts`, just without ever activating a
-   * capability's tool calls.
+   * phrasing, each classified independently — and, when 2+ tickers are named,
+   * additionally produces a comparative verdict, §12.8). `company_snapshot`
+   * routes to the company-snapshot capability (§13 — a ticker or small handful,
+   * valuation/financial-health/general facts vs. sector peers; a broader
+   * question than `single_report`'s narrow "is this growth real", and a
+   * separate intent specifically so an ordinary growth-authenticity question
+   * never pays this capability's extra API cost). `technical_analysis` routes
+   * to the technical-analysis capability (§14 — a ticker, a few tickers, or a
+   * sector's own ETF; deterministic indicator/support-resistance computation
+   * producing entry/stop-loss/take-profit trade levels via two independently
+   * disaggregated methodologies, never a blended "the" stop-loss). `followup`
+   * activates NO capability of its own — it reuses whatever capability output
+   * is already in state from an earlier turn in the same thread
+   * (`report-writer.ts`'s followup branch), only reachable when a prior
+   * analysis actually exists. `general_chat` is different in kind, not just
+   * capability-less — it is the honest classification for input that is not a
+   * finance question at all (small talk, "what can you do?"), and it DOES get
+   * a real LLM-generated reply from `report-writer.ts`, just without ever
+   * activating a capability's tool calls.
    *
    * NOTE: no `.default()`. See the "two required fields" comment at the end of
    * this file — this is intentional and worth a decision from the reviewer.
    */
-  intent: z.enum(["sector_trend", "single_report", "portfolio_scan", "followup", "general_chat"]),
+  intent: z.enum([
+    "sector_trend",
+    "single_report",
+    "portfolio_scan",
+    "company_snapshot",
+    "technical_analysis",
+    "followup",
+    "general_chat",
+  ]),
 
   /**
    * Lookback window for all performance math, e.g. "5d", "1mo", "3mo", "ytd".
@@ -460,6 +710,20 @@ export const AgentStateSchema = z.object({
    */
   trendDataErrors: z.array(z.string()).default([]),
 
+  /**
+   * GICS sector names whose leader breakdown used Yahoo's top-10 holdings
+   * fallback rather than Alpha Vantage's full list this run — `emerging_mover`
+   * is not reliable for these (§5.8b/§5.9b: a top-10 list is definitionally
+   * all high-weight names, so "low weight, high speed" is unreachable).
+   *
+   * Written by `sector-leaders.ts` alongside `sectorLeaders`/`trendDataErrors`.
+   * Read by `report-writer.ts`: when a sector the user explicitly asked about
+   * (`sectors`) appears here, the answer for that sector is missing a real
+   * signal, not just a confidence badge — report-writer declines to narrate
+   * it rather than present an incomplete picture as complete.
+   */
+  partialHoldingsSectors: z.array(z.string()).default([]),
+
   // ---------------------------------------------------------------------------
   // --- Growth-authenticity capability ---
   // Written by: `nodes/capabilities/growth-authenticity/*` ONLY. Each of the
@@ -487,6 +751,79 @@ export const AgentStateSchema = z.object({
 
   /** Non-fatal problems specific to this capability. Same role as `trendDataErrors`. */
   growthCheckErrors: z.array(z.string()).default([]),
+
+  // ---------------------------------------------------------------------------
+  // --- Portfolio-scan capability (§12) ---
+  // Written by: `nodes/capabilities/portfolio-scan/portfolio-growth-scan.ts`
+  // ONLY. Namespaced separately from `growthAuthenticity` above per §4's
+  // extension contract — this capability drives the SAME five
+  // growth-authenticity node functions internally (§12.3), once per ticker,
+  // but never writes to `growthAuthenticity`/`revenueGrowth`/etc. themselves;
+  // those stay exclusively owned by a `single_report` run.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One `GrowthAuthenticityResult` per analysed ticker (§12.1), in the order
+   * the tickers were named. Null means this capability did not run. Never
+   * blended into a single portfolio score (§12.5) — each entry stays exactly
+   * as disaggregated as a standalone `growthAuthenticity` result would be.
+   */
+  portfolioGrowthResults: z.array(GrowthAuthenticityResultSchema).nullable().default(null),
+
+  /**
+   * The comparative verdict across 2+ compared tickers (§12.8), or null when
+   * fewer than 2 tickers were analysed — nothing to compare. Written by
+   * `ticker-comparison.ts`, the same file as `portfolioGrowthScanNode`'s
+   * companion node in this capability's folder. THE ONE FIELD where §9.1's
+   * narrow blending carve-out applies: `overallVerdict` is a fixed rank-count
+   * decision table over already-verified numbers, never an arithmetic blend —
+   * `metricRanks` keeps every underlying value disaggregated alongside it.
+   */
+  tickerComparison: TickerComparisonResultSchema.nullable().default(null),
+
+  /** Non-fatal problems specific to this capability (§12.7). Same role as `trendDataErrors`. */
+  portfolioScanErrors: z.array(z.string()).default([]),
+
+  // ---------------------------------------------------------------------------
+  // --- Company-snapshot capability (§13) ---
+  // Written by: `nodes/capabilities/company-snapshot/company-snapshot-scan.ts`
+  // ONLY. This is the one graph node the capability registers — the other
+  // three files (company-profile.ts, valuation-metrics.ts,
+  // financial-health.ts) are plain functions, not nodes (§13.7), called both
+  // by this node and internally by `ticker-comparison.ts` (§12.8) in the
+  // OTHER capability's folder. Never writes `tickerComparison` or vice versa —
+  // §4's never-share-a-field rule.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One `CompanySnapshotResult` per analysed ticker (§13.1), in the order the
+   * tickers were named. Null means this capability did not run.
+   */
+  companySnapshots: z.array(CompanySnapshotResultSchema).nullable().default(null),
+
+  /** Non-fatal problems specific to this capability (§13.10). Same role as `trendDataErrors`. */
+  companySnapshotErrors: z.array(z.string()).default([]),
+
+  // ---------------------------------------------------------------------------
+  // --- Technical-analysis capability (§14) ---
+  // Written by: `nodes/capabilities/technical-analysis/technical-analysis-
+  // scan.ts` ONLY. This is the one graph node the capability registers — the
+  // other files (indicator-snapshot.ts, market-context.ts,
+  // support-resistance.ts, stance-classification.ts, trade-levels-atr.ts,
+  // trade-levels-swing.ts) are plain functions, not nodes (mirrors §13.7).
+  // Zero new external data calls — reuses the industry-trend capability's own
+  // Yahoo OHLCV fetchers verbatim, so this capability spends no Alpha Vantage
+  // quota at all.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One `TechnicalAnalysisResult` per analysed symbol (§14.1), in the order
+   * the targets were resolved. Null means this capability did not run.
+   */
+  technicalAnalysis: z.array(TechnicalAnalysisResultSchema).nullable().default(null),
+
+  /** Non-fatal problems specific to this capability. Same role as `trendDataErrors`. */
+  technicalAnalysisErrors: z.array(z.string()).default([]),
 
   // ---------------------------------------------------------------------------
   // GENERIC
@@ -579,6 +916,42 @@ export type GrowthAuthenticityResult = z.infer<typeof GrowthAuthenticityResultSc
 
 /** The classification union, extracted so nodes/UI can switch over it exhaustively. */
 export type GrowthClassification = GrowthAuthenticityResult["classification"];
+
+/** One comparison metric's per-ticker values plus its winner. */
+export type TickerMetricRank = z.infer<typeof TickerMetricRankSchema>;
+
+/** The fixed decision-table verdict across compared tickers (§12.8). */
+export type TickerOverallVerdict = z.infer<typeof TickerOverallVerdictSchema>;
+
+/** The assembled cross-ticker comparison result. */
+export type TickerComparisonResult = z.infer<typeof TickerComparisonResultSchema>;
+
+/** General, unpeer-compared company facts (§13.3). */
+export type CompanyProfileFacts = z.infer<typeof CompanyProfileFactsSchema>;
+
+/** One metric compared against a bounded sector-peer sample. */
+export type PeerRelativeMetric = z.infer<typeof PeerRelativeMetricSchema>;
+
+/** Valuation multiples vs. sector peers (§13.5). */
+export type ValuationMetricsResult = z.infer<typeof ValuationMetricsResultSchema>;
+
+/** Financial-health ratios vs. sector peers (§13.6). */
+export type FinancialHealthResult = z.infer<typeof FinancialHealthResultSchema>;
+
+/** The assembled company-snapshot result for one ticker. */
+export type CompanySnapshotResult = z.infer<typeof CompanySnapshotResultSchema>;
+
+/** Point-in-time indicator values (§14.4). */
+export type IndicatorSnapshot = z.infer<typeof IndicatorSnapshotSchema>;
+
+/** One merged support/resistance level (§14.6). */
+export type SupportResistanceLevel = z.infer<typeof SupportResistanceLevelSchema>;
+
+/** One trade-level methodology's entry/stop/target (§14.7/§14.8). */
+export type TradeLevels = z.infer<typeof TradeLevelsSchema>;
+
+/** The assembled technical-analysis result for one symbol. */
+export type TechnicalAnalysisResult = z.infer<typeof TechnicalAnalysisResultSchema>;
 
 /**
  * Raw inferred state — `messages` is `any[]` here, straight from the schema.

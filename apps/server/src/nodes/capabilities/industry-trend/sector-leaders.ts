@@ -348,14 +348,17 @@ async function mapWithConcurrency<T, R>(
  * Exported for direct unit testing — this is where the whole §5.4 computation
  * lives, so it is worth exercising without a full graph state around it.
  *
- * @returns the leaders plus any degradation notes for `trendDataErrors`.
+ * @returns the leaders, any degradation notes for `trendDataErrors`, and
+ *   whether the holdings behind them are partial (Yahoo top-10 fallback
+ *   rather than Alpha Vantage's full list) — the caller collects sectors
+ *   where this is true into `partialHoldingsSectors`.
  */
 export async function buildSectorLeaders(args: {
   sectorName: string;
   etfTicker: string;
   timeWindow: string;
   now: Date;
-}): Promise<{ leaders: SectorLeader[]; warnings: string[] }> {
+}): Promise<{ leaders: SectorLeader[]; warnings: string[]; isPartial: boolean }> {
   const { sectorName, etfTicker, timeWindow, now } = args;
 
   // --- Step 1: WEIGHT, from disclosed holdings (§5.4 authoritative source) ---
@@ -363,7 +366,7 @@ export async function buildSectorLeaders(args: {
   const warnings = [...holdingsResult.warnings];
 
   if (holdingsResult.holdings.length === 0) {
-    return { leaders: [], warnings };
+    return { leaders: [], warnings, isPartial: holdingsResult.isPartial };
   }
 
   // Heaviest-first, so a cap truncates the small tail rather than the top.
@@ -522,7 +525,7 @@ export async function buildSectorLeaders(args: {
           : 0,
   );
 
-  return { leaders, warnings };
+  return { leaders, warnings, isPartial: holdingsResult.isPartial };
 }
 
 // =============================================================================
@@ -532,14 +535,17 @@ export async function buildSectorLeaders(args: {
 /**
  * Compute leader lists for the trending sectors.
  *
- * READS  `sectorRankings`, `timeWindow`, `trendDataErrors`
- * WRITES `sectorLeaders`, `trendDataErrors`
+ * READS  `sectorRankings`, `sectors`, `timeWindow`, `trendDataErrors`
+ * WRITES `sectorLeaders`, `trendDataErrors`, `partialHoldingsSectors`
  * NEVER TOUCHES anything else — see the state contract in `./index.ts`.
  *
- * Runs only for the top N up and bottom N down sectors (§5.4), not all 11.
- * Building a leader list costs one holdings fetch plus one price fetch per
- * constituent, and §1's free-tier budget will not absorb that for sectors
- * nobody asked about.
+ * Runs for the top N up and bottom N down sectors (§5.4), PLUS any sector the
+ * user explicitly named in `state.sectors` — a sector someone asked about by
+ * name deserves a leader breakdown even if it didn't happen to be one of that
+ * period's biggest movers. Building a leader list costs one holdings fetch
+ * plus one price fetch per constituent, and §1's free-tier budget will not
+ * absorb that for sectors nobody asked about, which is why the set otherwise
+ * stays bounded to the top/bottom N rather than all 11.
  *
  * MUST run after `sectorTrendNode`, which populates `sectorRankings`.
  */
@@ -548,7 +554,7 @@ export async function sectorLeadersNode(
   now: Date = new Date(),
   config?: LangGraphRunnableConfig,
 ): Promise<Partial<AgentState>> {
-  const { sectorRankings, timeWindow } = state;
+  const { sectorRankings, sectors, timeWindow } = state;
 
   // `null` means the trend node did not run; `[]` means it ran and found
   // nothing. Both leave us with no sectors to analyse, but they are different
@@ -562,6 +568,7 @@ export async function sectorLeadersNode(
           ? "Sector leaders skipped: sector rankings were never computed."
           : "Sector leaders skipped: no sectors were successfully ranked.",
       ],
+      partialHoldingsSectors: [],
     };
   }
 
@@ -575,6 +582,29 @@ export async function sectorLeadersNode(
 
   const sectorLeaders: Record<string, SectorLeader[]> = {};
   const trendDataErrors = [...state.trendDataErrors];
+  // Built fresh each run, like `sectorLeaders` itself — NOT accumulated from
+  // `state.partialHoldingsSectors`, because a stale entry from an earlier
+  // turn (when this sector's holdings genuinely were partial) would wrongly
+  // gate a later turn's report even after the data is complete again.
+  const partialHoldingsSectors: string[] = [];
+
+  // A sector the user named by hand joins the analysed set even when it
+  // wasn't one of this period's biggest movers. `parseSectors` (supervisor.ts)
+  // already resolves aliases to the same canonical GICS names `sectorRankings`
+  // uses, so this is a plain membership check, not a fuzzy match.
+  const alreadyAnalysed = new Set(trending.map((r) => r.sector));
+  for (const requestedSector of sectors) {
+    if (alreadyAnalysed.has(requestedSector)) continue;
+    const ranking = sectorRankings.find((r) => r.sector === requestedSector);
+    if (ranking === undefined) {
+      trendDataErrors.push(
+        `${requestedSector}: requested but no ranking data was computed for it — leader analysis skipped.`,
+      );
+      continue;
+    }
+    trending.push(ranking);
+    alreadyAnalysed.add(requestedSector);
+  }
 
   // Sectors are processed sequentially: each one already fans out internally
   // over its constituents, so running sectors in parallel too would multiply
@@ -595,7 +625,7 @@ export async function sectorLeadersNode(
     }
 
     try {
-      const { leaders, warnings } = await buildSectorLeaders({
+      const { leaders, warnings, isPartial } = await buildSectorLeaders({
         sectorName: ranking.sector,
         etfTicker,
         timeWindow,
@@ -604,6 +634,7 @@ export async function sectorLeadersNode(
 
       sectorLeaders[ranking.sector] = leaders;
       trendDataErrors.push(...warnings);
+      if (isPartial) partialHoldingsSectors.push(ranking.sector);
     } catch (error) {
       // §8: one sector failing must not lose the other five.
       trendDataErrors.push(
@@ -611,8 +642,11 @@ export async function sectorLeadersNode(
           `${error instanceof Error ? error.message : String(error)}`,
       );
       sectorLeaders[ranking.sector] = [];
+      // A failed fetch is at least as compromised as a partial one — there is
+      // no weight/speed data for this sector at all.
+      partialHoldingsSectors.push(ranking.sector);
     }
   }
 
-  return { sectorLeaders, trendDataErrors };
+  return { sectorLeaders, trendDataErrors, partialHoldingsSectors };
 }

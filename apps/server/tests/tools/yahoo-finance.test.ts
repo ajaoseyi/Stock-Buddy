@@ -45,12 +45,14 @@ const xlkHoldings = fixture("yahoo-topholdings-xlk");
 const mocks = vi.hoisted(() => ({
   chart: vi.fn(),
   quoteSummary: vi.fn(),
+  search: vi.fn(),
 }));
 
 vi.mock("yahoo-finance2", () => ({
   default: class {
     chart = mocks.chart;
     quoteSummary = mocks.quoteSummary;
+    search = mocks.search;
   },
 }));
 
@@ -63,6 +65,7 @@ const {
   fetchSectorEtfHistory,
   fetchConstituentOhlcv,
   fetchFundTopHoldings,
+  resolveCompanyTicker,
 } = await import("../../src/tools/yahoo-finance.js");
 
 let store: InstanceType<typeof CacheStore>;
@@ -76,6 +79,7 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   mocks.chart.mockReset();
   mocks.quoteSummary.mockReset();
+  mocks.search.mockReset();
 });
 
 afterEach(() => {
@@ -463,5 +467,107 @@ describe("Error handling (§8: degrade with context, never crash the run)", () =
 
     expect(quotes).toHaveLength(2);
     expect(quotes[1]!.close).toBeNull();
+  });
+});
+
+// =============================================================================
+// resolveCompanyTicker — company-name → ticker verification (supervisor.ts's
+// company-mention feature). Requires TWO independent `search()` corroborations
+// before trusting a guess; see the function's own doc comment for why either
+// check alone is insufficient.
+// =============================================================================
+describe("resolveCompanyTicker", () => {
+  /** A minimal Yahoo `search()` equity result. */
+  function equityQuote(symbol: string, name: string) {
+    return {
+      symbol,
+      isYahooFinance: true,
+      exchange: "NMS",
+      quoteType: "EQUITY",
+      longname: name,
+      index: "quotes",
+      score: 1,
+    };
+  }
+
+  it("confirms a guess when both the symbol lookup and the name lookup agree", async () => {
+    mocks.search.mockImplementation(async (query: string) => {
+      if (query === "NVDA") return { quotes: [equityQuote("NVDA", "NVIDIA Corporation")] };
+      if (query === "Nvidia") return { quotes: [equityQuote("NVDA", "NVIDIA Corporation")] };
+      return { quotes: [] };
+    });
+
+    const result = await resolveCompanyTicker("Nvidia", "NVDA");
+
+    expect(result).toEqual({ symbol: "NVDA", name: "NVIDIA Corporation" });
+  });
+
+  it("rejects a guess whose symbol exists but whose name search does not corroborate it", async () => {
+    // The symbol is real and tradeable, but searching the company NAME never
+    // surfaces it — Yahoo's own name-matching disagrees with the guess.
+    mocks.search.mockImplementation(async (query: string) => {
+      if (query === "ZZZZ") return { quotes: [equityQuote("ZZZZ", "Some Unrelated Company")] };
+      return { quotes: [] };
+    });
+
+    const result = await resolveCompanyTicker("Nvidia", "ZZZZ");
+
+    expect(result).toBeNull();
+  });
+
+  it("rejects a guess whose name search corroborates it but the symbol itself is not a resolvable equity/ETF", async () => {
+    // e.g. a delisted symbol, or a non-tradeable search hit (news/nav result).
+    mocks.search.mockImplementation(async (query: string) => {
+      if (query === "NVDA") return { quotes: [] };
+      if (query === "Nvidia") return { quotes: [equityQuote("NVDA", "NVIDIA Corporation")] };
+      return { quotes: [] };
+    });
+
+    const result = await resolveCompanyTicker("Nvidia", "NVDA");
+
+    expect(result).toBeNull();
+  });
+
+  it("rejects a guess with no corroboration from either search", async () => {
+    mocks.search.mockResolvedValue({ quotes: [] });
+
+    const result = await resolveCompanyTicker("Nvidia", "ZZZZ");
+
+    expect(result).toBeNull();
+  });
+
+  it("rejects a symbol match whose quoteType is not an equity or ETF", async () => {
+    mocks.search.mockImplementation(async (query: string) => {
+      if (query === "NVDA")
+        return {
+          quotes: [{ ...equityQuote("NVDA", "NVIDIA Corp Option"), quoteType: "OPTION" }],
+        };
+      if (query === "Nvidia") return { quotes: [equityQuote("NVDA", "NVIDIA Corporation")] };
+      return { quotes: [] };
+    });
+
+    const result = await resolveCompanyTicker("Nvidia", "NVDA");
+
+    expect(result).toBeNull();
+  });
+
+  it("does not re-fetch on a repeated resolution of the same guess (indefinite cache)", async () => {
+    mocks.search.mockImplementation(async (query: string) => {
+      if (query === "NVDA" || query === "Nvidia") {
+        return { quotes: [equityQuote("NVDA", "NVIDIA Corporation")] };
+      }
+      return { quotes: [] };
+    });
+
+    await resolveCompanyTicker("Nvidia", "NVDA");
+    await resolveCompanyTicker("Nvidia", "NVDA");
+
+    // One search() call per distinct query (symbol, name) — the second
+    // resolution is served entirely from cache.
+    expect(mocks.search).toHaveBeenCalledTimes(2);
+  });
+
+  it("caches ticker lookups indefinitely, like company_profile", () => {
+    expect(TTL_BY_NAMESPACE["ticker_lookup"]).toBeNull();
   });
 });

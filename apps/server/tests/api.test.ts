@@ -35,7 +35,7 @@ vi.mock("../src/tools/etf-holdings.js", () => ({ fetchEtfHoldings: mocks.fetchEt
 const { buildServer } = await import("../src/api.js");
 const { setLlmForTesting } = await import("../src/llm.js");
 const { setCheckpointerForTesting } = await import("../src/checkpointer.js");
-const { resetGraphForTesting, getGraph } = await import("../src/graph.js");
+const { resetGraphForTesting } = await import("../src/graph.js");
 const { SqliteSaver } = await import("@langchain/langgraph-checkpoint-sqlite");
 
 function chart(symbol: string, to: number) {
@@ -297,13 +297,20 @@ describe("POST /api/analyze — the §7 contract", () => {
     const body = response.json();
 
     expect(Object.keys(body).sort()).toEqual([
+      "companySnapshotErrors",
+      "companySnapshots",
       "dataErrors",
       "finalReport",
       "growthAuthenticity",
       "growthCheckErrors",
+      "portfolioGrowthResults",
+      "portfolioScanErrors",
       "sectorLeaders",
       "sectorRankings",
+      "technicalAnalysis",
+      "technicalAnalysisErrors",
       "threadId",
+      "tickerComparison",
       "timeWindow",
       "trendDataErrors",
       "validationPassed",
@@ -348,57 +355,43 @@ describe("POST /api/analyze — the §7 contract", () => {
     });
     expect(first.json().timeWindow).toBe("3mo");
     const { threadId } = first.json();
-    console.error("DEBUG first.json()", JSON.stringify(first.json()));
 
     // Second turn, same thread: a follow-up that does NOT restate a period.
     // If `api.ts` reseeded `timeWindow` to the placeholder default before
     // `supervisorNode` ran, this would silently report "1mo" instead of the
     // window the reused data was actually computed for.
-    const snap = await getGraph().getState({ configurable: { thread_id: threadId } });
-    console.error(
-      "DEBUG getState before 2nd invoke, sectorRankings=",
-      snap.values.sectorRankings === null ? "null" : `${snap.values.sectorRankings.length} rows`,
-    );
-    {
-      const { getCheckpointer } = await import("../src/checkpointer.js");
-      const db = getCheckpointer().db;
-      const rows = db
-        .prepare(
-          `SELECT checkpoint_id, parent_checkpoint_id, type, checkpoint_ns FROM checkpoints WHERE thread_id = ? ORDER BY checkpoint_id ASC`,
-        )
-        .all(threadId);
-      console.error("DEBUG raw checkpoints:", JSON.stringify(rows));
-
-      const last = db
-        .prepare(
-          `SELECT checkpoint, metadata FROM checkpoints WHERE thread_id = ? ORDER BY checkpoint_id DESC LIMIT 1`,
-        )
-        .get(threadId);
-      console.error("DEBUG last checkpoint blob (first 2000 chars):", String(last.checkpoint).slice(0, 2000));
-      console.error("DEBUG last checkpoint metadata:", String(last.metadata).slice(0, 1000));
-    }
-    {
-      const { HumanMessage: HM } = await import("@langchain/core/messages");
-      const direct = await getGraph().invoke(
-        { messages: [new HM("what about it - DIRECT")] },
-        { configurable: { thread_id: threadId } },
-      );
-      console.error(
-        "DEBUG DIRECT invoke sectorRankings=",
-        direct.sectorRankings === null ? "null" : `${direct.sectorRankings.length} rows`,
-        "timeWindow=",
-        direct.timeWindow,
-      );
-    }
-    console.error("DEBUG sending threadId", JSON.stringify(threadId), typeof threadId);
     const second = await app.inject({
       method: "POST",
       url: "/api/analyze",
       payload: { query: "what about the emerging movers?", threadId },
     });
 
-    console.error("DEBUG second.json()", JSON.stringify(second.json()));
     expect(second.json().timeWindow).toBe("3mo");
+  });
+
+  it("still returns sectorRankings on a continuing thread's follow-up turn", async () => {
+    // A LangGraph behaviour worth pinning down (verified empirically, not
+    // assumed — see api.ts's `resolveAnalyzeRequest`): a channel written by a
+    // node that does NOT run again in a given `.invoke()` is not reliably
+    // handed to the nodes that DO run, even though the checkpoint itself
+    // still has the correct value. Omitting `sectorRankings` from a
+    // continuing thread's graph input (relying on it to "just persist") loses
+    // it; `resolveAnalyzeRequest` must read it back explicitly instead.
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/analyze",
+      payload: { query: "what sectors are trending over 3 months" },
+    });
+    const { threadId } = first.json();
+    expect(first.json().sectorRankings).not.toBeNull();
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/analyze",
+      payload: { query: "what about the emerging movers?", threadId },
+    });
+
+    expect(second.json().sectorRankings).toEqual(first.json().sectorRankings);
   });
 
   it("gives each new request a distinct thread", async () => {
@@ -510,13 +503,20 @@ describe("POST /api/analyze/stream", () => {
     const last = events.at(-1)!;
     expect(last.type).toBe("result");
     expect(Object.keys(last.data as object).sort()).toEqual([
+      "companySnapshotErrors",
+      "companySnapshots",
       "dataErrors",
       "finalReport",
       "growthAuthenticity",
       "growthCheckErrors",
+      "portfolioGrowthResults",
+      "portfolioScanErrors",
       "sectorLeaders",
       "sectorRankings",
+      "technicalAnalysis",
+      "technicalAnalysisErrors",
       "threadId",
+      "tickerComparison",
       "timeWindow",
       "trendDataErrors",
       "validationPassed",
@@ -694,7 +694,12 @@ describe("POST /api/analyze — degradation (§8)", () => {
     expect(response.json().trendDataErrors.join(" ")).toMatch(/top 10 holdings only/);
   });
 
-  it("answers honestly for an unimplemented capability", async () => {
+  it("answers honestly when portfolio_scan is asked with no named ticker", async () => {
+    // "how is my portfolio doing" matches PORTFOLIO_SIGNALS (§12.1) but names
+    // no ticker, so `activeCapabilities` stays empty (§12.2) and
+    // `report-writer.ts` returns its portfolio_scan-specific honest message
+    // rather than the generic "unimplemented capability" fallback — every
+    // implemented intent now has its own specific handling.
     const response = await app.inject({
       method: "POST",
       url: "/api/analyze",
@@ -702,6 +707,6 @@ describe("POST /api/analyze — degradation (§8)", () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().finalReport).toMatch(/outside what this agent can currently analyse/);
+    expect(response.json().finalReport).toMatch(/need at least one to check/);
   });
 });

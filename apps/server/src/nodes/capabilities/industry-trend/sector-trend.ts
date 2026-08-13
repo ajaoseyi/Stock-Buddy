@@ -29,7 +29,7 @@
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import type { AgentState, SectorRanking } from "../../../state.js";
 import {
-  AlphaVantageApiError,
+  asAlphaVantageError,
   fetchDailySeries,
   hasQuotaFor,
 } from "../../../tools/alpha-vantage.js";
@@ -168,7 +168,6 @@ export async function sectorTrendNode(
   now: Date = new Date(),
   config?: LangGraphRunnableConfig,
 ): Promise<Partial<AgentState>> {
-  console.error("DEBUG sectorTrendNode CALLED, activeCapabilities=", state.activeCapabilities);
   const trendDataErrors: string[] = [];
   const { timeWindow } = state;
 
@@ -461,17 +460,30 @@ async function crossCheckExtremes(args: {
       // §5.7: quota exhaustion falls back to Yahoo-only with a note rather than
       // failing the capability. Stop trying once the budget is gone — further
       // attempts would just be 5 more wasted calls.
-      if (error instanceof AlphaVantageApiError && error.isRateLimit) {
+      //
+      // `asAlphaVantageError` unwraps `withCache`'s error wrapping (§6) to see
+      // `isRateLimit` at all — a plain `instanceof AlphaVantageApiError` check
+      // is always false here, because every AV call goes through the cache
+      // layer, which rethrows fetcher failures as a generic `Error`. Without
+      // the unwrap, this branch never fires, quota exhaustion is never
+      // detected, and the code keeps burning calls it will only fail — each
+      // one appending Alpha Vantage's raw rate-limit response text (a
+      // paragraph of upsell copy) to a user-facing report.
+      const avError = asAlphaVantageError(error);
+      if (avError !== null && avError.isRateLimit) {
         trendDataErrors.push(
-          `Alpha Vantage quota exhausted during cross-check; remaining sectors use ` +
-            `Yahoo Finance only. (${error.message})`,
+          `Alpha Vantage quota exhausted during cross-check; remaining sectors use Yahoo Finance only.`,
         );
         return;
       }
 
+      // Prefer the unwrapped AV error's own message (short, code-authored —
+      // e.g. "Empty response body...") over the generic error's, which carries
+      // `withCache`'s "<source>/<endpoint> request failed: " prefix.
+      const message =
+        avError !== null ? avError.message : error instanceof Error ? error.message : String(error);
       trendDataErrors.push(
-        `${ranking.sector} (${etf}): cross-check unavailable — ` +
-          `${error instanceof Error ? error.message : String(error)}. Using Yahoo Finance only.`,
+        `${ranking.sector} (${etf}): cross-check unavailable — ${message}. Using Yahoo Finance only.`,
       );
     }
   }

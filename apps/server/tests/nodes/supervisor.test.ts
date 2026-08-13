@@ -15,6 +15,7 @@ import { HumanMessage, AIMessage, type BaseMessage } from "@langchain/core/messa
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { AgentState, Intent } from "../../src/state.js";
 import * as llmModule from "../../src/llm.js";
+import * as yahooFinanceModule from "../../src/tools/yahoo-finance.js";
 import {
   DEFAULT_TIME_WINDOW,
   classifyIntent,
@@ -23,7 +24,20 @@ import {
   parseTickers,
   parseTimeWindow,
   supervisorNode,
+  type CompanyMention,
 } from "../../src/nodes/supervisor.js";
+
+// resolveCompanyTicker is the deterministic half of company-name resolution
+// (§ supervisor.ts file header) — it goes straight to Yahoo's `search()`, so
+// it's mocked here the same way `setLlmForTesting` stands in for the LLM,
+// keeping this suite offline and deterministic (§8). Everything else in the
+// module (SECTOR_ETF_TO_GICS, used by parseSectors) passes through real.
+vi.mock("../../src/tools/yahoo-finance.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/tools/yahoo-finance.js")>();
+  return { ...actual, resolveCompanyTicker: vi.fn() };
+});
+
+const resolveCompanyTickerMock = vi.mocked(yahooFinanceModule.resolveCompanyTicker);
 
 function stateWith(text: string, extra: unknown[] = []): AgentState {
   return {
@@ -36,12 +50,20 @@ function stateWith(text: string, extra: unknown[] = []): AgentState {
     sectorRankings: null,
     sectorLeaders: null,
     trendDataErrors: [],
+    partialHoldingsSectors: [],
     revenueGrowth: null,
     priceRevenueDiscrepancy: null,
     inorganicSignal: null,
     sectorBenchmark: null,
     growthAuthenticity: null,
     growthCheckErrors: [],
+    portfolioGrowthResults: null,
+    tickerComparison: null,
+    portfolioScanErrors: [],
+    companySnapshots: null,
+    companySnapshotErrors: [],
+    technicalAnalysis: null,
+    technicalAnalysisErrors: [],
     dataErrors: [],
     draftReport: null,
     validationPassed: false,
@@ -51,9 +73,71 @@ function stateWith(text: string, extra: unknown[] = []): AgentState {
   };
 }
 
-/** A structured-output model that always classifies as `intent`. */
-function fakeStructuredLlm(intent: Intent) {
-  const invoke = vi.fn(async (_messages: BaseMessage[]) => ({ intent }));
+/** Minimal, schema-valid `GrowthAuthenticityResult`, for hasPriorAnalysis fixtures. */
+const MINIMAL_GROWTH_RESULT = {
+  ticker: "NVDA",
+  timeWindow: "1y",
+  revenueGrowth: { ticker: "NVDA", latestQuarterEnd: "2026-06-30", revenueGrowthPct: 10, basis: "yoy_quarterly" as const },
+  discrepancy: {
+    priceChangePct: 5,
+    priceToRevenueGrowthRatio: null,
+    ratioZScore: null,
+    baselineQuarterCount: 0,
+    discrepancyFlag: "not_computable" as const,
+  },
+  inorganic: {
+    goodwillTrend: { deltaPct: null, zScore: null, baselineQuarterCount: 0, direction: "insufficient_data" as const },
+    ppeTrend: { deltaPct: null, zScore: null, baselineQuarterCount: 0, direction: "insufficient_data" as const },
+    cashTrend: { deltaPct: null, zScore: null, baselineQuarterCount: 0, direction: "insufficient_data" as const },
+    inorganicSignal: "insufficient_data" as const,
+  },
+  sectorBenchmark: { sector: null, sectorBenchmarkPct: null, stockVsSectorSpreadPct: null, macroBetaFlag: "not_computable" as const },
+  classification: "insufficient_data" as const,
+  classificationReasonCodes: [],
+};
+
+/** Minimal, schema-valid `CompanySnapshotResult`, for hasPriorAnalysis fixtures. */
+const MINIMAL_SNAPSHOT = {
+  ticker: "NVDA",
+  timeWindow: "1y",
+  profile: null,
+  valuation: null,
+  financialHealth: null,
+};
+
+/** Minimal, schema-valid `TechnicalAnalysisResult`, for hasPriorAnalysis fixtures. */
+const MINIMAL_TECHNICAL_ANALYSIS = {
+  symbol: "NVDA",
+  requestedAs: "ticker" as const,
+  sectorName: null,
+  timeWindow: "1y",
+  indicators: {
+    sma20: null,
+    sma50: null,
+    sma200: null,
+    ema12: null,
+    ema26: null,
+    rsi14: null,
+    macd: { macdLine: null, signalLine: null, histogram: null },
+    atr14: null,
+    bollinger: { middle: null, upper: null, lower: null },
+    latestClose: null,
+    asOfDate: null,
+  },
+  trendDirection: "insufficient_data" as const,
+  momentumDirection: "insufficient_data" as const,
+  volatilityLevel: "insufficient_data" as const,
+  supportLevels: [],
+  resistanceLevels: [],
+  atrLevels: { entry: null, stopLoss: null, takeProfit: null, basisNote: "" },
+  swingLevels: { entry: null, stopLoss: null, takeProfit: null, basisNote: "" },
+  stance: "insufficient_data" as const,
+  stanceReasonCodes: [],
+};
+
+/** A structured-output model that always classifies as `intent`, with optional company-name guesses. */
+function fakeStructuredLlm(intent: Intent, companyMentions: CompanyMention[] = []) {
+  const invoke = vi.fn(async (_messages: BaseMessage[]) => ({ intent, companyMentions }));
   const withStructuredOutput = vi.fn(() => ({ invoke }));
   llmModule.setLlmForTesting({
     provider: "gemini",
@@ -78,6 +162,7 @@ function failingStructuredLlm(error: Error) {
 beforeEach(() => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  resolveCompanyTickerMock.mockReset();
 });
 
 afterEach(() => {
@@ -168,6 +253,15 @@ describe("parseTickers", () => {
     expect(parseTickers("what does the ETF data say about GICS sectors")).toEqual([]);
   });
 
+  // REGRESSION: found live — "RSI" was parsing as a ticker, which then won
+  // resolve-targets.ts's ticker-priority rule (§14.3) over the named sector,
+  // sending technical-analysis off to fetch a nonexistent "RSI" symbol
+  // instead of resolving "tech" to XLK.
+  it("ignores technical-analysis indicator acronyms (§14)", () => {
+    expect(parseTickers("what's the RSI on the tech sector right now")).toEqual([]);
+    expect(parseTickers("is the MACD or ATR showing anything on SMA/EMA crossovers")).toEqual([]);
+  });
+
   it("returns empty for ordinary lowercase prose", () => {
     expect(parseTickers("what sectors are trending up this month")).toEqual([]);
   });
@@ -238,6 +332,63 @@ describe("classifyIntent", () => {
     // phrase with nothing to refer to is not a follow-up.
     expect(classifyIntent("what about the emerging movers?", [], [], false)).not.toBe("followup");
   });
+
+  // company_snapshot (§13) — checked BEFORE single_report so a valuation/
+  // financial-health question about a company reaches the broader capability.
+  it("classifies a valuation/financial-health question with a ticker as company_snapshot", () => {
+    expect(classifyIntent("is NVDA overvalued", ["NVDA"], [], false)).toBe("company_snapshot");
+    expect(classifyIntent("what's AAPL's debt situation look like", ["AAPL"], [], false)).toBe(
+      "company_snapshot",
+    );
+    expect(classifyIntent("give me NVDA's key stats", ["NVDA"], [], false)).toBe("company_snapshot");
+  });
+
+  it("company_snapshot wins over single_report when both signals are present", () => {
+    expect(classifyIntent("give me a deep dive on NVDA's valuation", ["NVDA"], [], false)).toBe(
+      "company_snapshot",
+    );
+  });
+
+  it("does not classify company_snapshot signals without a named ticker", () => {
+    expect(classifyIntent("what's a good PE ratio look like", [], [], false)).not.toBe(
+      "company_snapshot",
+    );
+  });
+
+  it("still routes multiple named tickers to portfolio_scan even with valuation language", () => {
+    // single_report/company_snapshot are single-ticker-scoped by design;
+    // a second ticker means this is the multi-ticker case (§12).
+    expect(classifyIntent("compare NVDA and AMD valuations", ["NVDA", "AMD"], [], false)).toBe(
+      "portfolio_scan",
+    );
+  });
+
+  // technical_analysis (§14) — checked BEFORE the portfolio/multi-ticker rule.
+  describe("technical_analysis", () => {
+    it("classifies a single-ticker entry/stop-loss question", () => {
+      expect(
+        classifyIntent("give me an entry point and stop loss for NVDA", ["NVDA"], [], false),
+      ).toBe("technical_analysis");
+    });
+
+    it("classifies a sector-only technical question", () => {
+      expect(
+        classifyIntent("what's the RSI on the tech sector right now", [], ["Information Technology"], false),
+      ).toBe("technical_analysis");
+    });
+
+    it("REGRESSION: TA phrasing wins over the multi-ticker heuristic that would otherwise route to portfolio_scan", () => {
+      expect(
+        classifyIntent("give me trading levels for AAPL and MSFT", ["AAPL", "MSFT"], [], false),
+      ).toBe("technical_analysis");
+    });
+
+    it("does not fire without a named ticker or sector", () => {
+      expect(classifyIntent("what's a good stop loss strategy in general", [], [], false)).not.toBe(
+        "technical_analysis",
+      );
+    });
+  });
 });
 
 // =============================================================================
@@ -247,7 +398,19 @@ describe("classifyIntentLlm", () => {
   it("returns whatever intent the structured-output model classifies", async () => {
     fakeStructuredLlm("sector_trend");
     const result = await classifyIntentLlm("what sectors are trending up this month", [], [], false);
-    expect(result).toBe("sector_trend");
+    expect(result.intent).toBe("sector_trend");
+  });
+
+  it("returns the model's company-name guesses alongside the intent", async () => {
+    fakeStructuredLlm("single_report", [{ name: "Nvidia", guessedTicker: "NVDA" }]);
+    const result = await classifyIntentLlm("is Nvidia's growth real?", [], [], false);
+    expect(result.companyMentions).toEqual([{ name: "Nvidia", guessedTicker: "NVDA" }]);
+  });
+
+  it("defaults to an empty companyMentions list when the model finds no company names", async () => {
+    fakeStructuredLlm("sector_trend");
+    const result = await classifyIntentLlm("what sectors are trending up this month", [], [], false);
+    expect(result.companyMentions).toEqual([]);
   });
 
   it("sends the raw message plus detected tickers/sectors as hints", async () => {
@@ -314,6 +477,43 @@ describe("supervisorNode", () => {
     expect(result.activeCapabilities).toEqual(["growth_authenticity"]);
   });
 
+  it("activates company_snapshot for a valuation question with a ticker", async () => {
+    fakeStructuredLlm("company_snapshot");
+    const result = await supervisorNode(
+      stateWith("is NVDA overvalued compared to other chipmakers?"),
+    );
+    expect(result.intent).toBe("company_snapshot");
+    expect(result.activeCapabilities).toEqual(["company_snapshot"]);
+  });
+
+  it("activates NOTHING for company_snapshot with no ticker named", async () => {
+    fakeStructuredLlm("company_snapshot");
+    const result = await supervisorNode(stateWith("is this stock overvalued?"));
+    expect(result.intent).toBe("company_snapshot");
+    expect(result.activeCapabilities).toEqual([]);
+  });
+
+  it("activates technical_analysis for a single-ticker trading-levels question", async () => {
+    fakeStructuredLlm("technical_analysis");
+    const result = await supervisorNode(stateWith("give me an entry point and stop loss for NVDA"));
+    expect(result.intent).toBe("technical_analysis");
+    expect(result.activeCapabilities).toEqual(["technical_analysis"]);
+  });
+
+  it("activates technical_analysis for a sector-only technical question", async () => {
+    fakeStructuredLlm("technical_analysis");
+    const result = await supervisorNode(stateWith("what's the RSI on the tech sector right now"));
+    expect(result.intent).toBe("technical_analysis");
+    expect(result.activeCapabilities).toEqual(["technical_analysis"]);
+  });
+
+  it("activates NOTHING for technical_analysis with neither a ticker nor a sector named", async () => {
+    fakeStructuredLlm("technical_analysis");
+    const result = await supervisorNode(stateWith("what's a good stop loss strategy in general"));
+    expect(result.intent).toBe("technical_analysis");
+    expect(result.activeCapabilities).toEqual([]);
+  });
+
   it("activates NOTHING for an unimplemented intent", async () => {
     // §9: no speculative support. The graph routes this to an honest
     // "not supported yet" rather than a fabricated answer.
@@ -332,6 +532,42 @@ describe("supervisorNode", () => {
 
     expect(result.intent).toBe("followup");
     expect(result.activeCapabilities).toEqual([]);
+  });
+
+  it("tells the model a prior analysis exists when only portfolioGrowthResults is populated (fixes a pre-existing gap)", async () => {
+    const { invoke } = fakeStructuredLlm("followup");
+    const state = stateWith("what about the others?");
+    state.portfolioGrowthResults = [MINIMAL_GROWTH_RESULT];
+
+    await supervisorNode(state);
+
+    const messages = invoke.mock.calls[0]![0] as BaseMessage[];
+    const human = messages.find((m) => m.getType() === "human")!;
+    expect(human.content).toContain("Prior analysis exists in this conversation: yes");
+  });
+
+  it("tells the model a prior analysis exists when only companySnapshots is populated", async () => {
+    const { invoke } = fakeStructuredLlm("followup");
+    const state = stateWith("what about its balance sheet?");
+    state.companySnapshots = [MINIMAL_SNAPSHOT];
+
+    await supervisorNode(state);
+
+    const messages = invoke.mock.calls[0]![0] as BaseMessage[];
+    const human = messages.find((m) => m.getType() === "human")!;
+    expect(human.content).toContain("Prior analysis exists in this conversation: yes");
+  });
+
+  it("tells the model a prior analysis exists when only technicalAnalysis is populated", async () => {
+    const { invoke } = fakeStructuredLlm("followup");
+    const state = stateWith("what about the swing-based levels?");
+    state.technicalAnalysis = [MINIMAL_TECHNICAL_ANALYSIS];
+
+    await supervisorNode(state);
+
+    const messages = invoke.mock.calls[0]![0] as BaseMessage[];
+    const human = messages.find((m) => m.getType() === "human")!;
+    expect(human.content).toContain("Prior analysis exists in this conversation: yes");
   });
 
   describe("followup timeWindow carry-over", () => {
@@ -421,6 +657,93 @@ describe("supervisorNode", () => {
       "tickers",
       "timeWindow",
     ]);
+  });
+
+  // Company-name → ticker resolution — see supervisor.ts's file header.
+  // `resolveCompanyTicker` is mocked (top of file); these tests only exercise
+  // how supervisorNode uses its result, not the Yahoo lookup logic itself
+  // (that's tests/tools/yahoo-finance.test.ts's job).
+  describe("company-name resolution", () => {
+    it("merges a verified company-name guess into tickers and activates the right capability", async () => {
+      resolveCompanyTickerMock.mockResolvedValue({ symbol: "NVDA", name: "NVIDIA Corporation" });
+      fakeStructuredLlm("single_report", [{ name: "Nvidia", guessedTicker: "NVDA" }]);
+
+      const result = await supervisorNode(stateWith("is Nvidia's growth backed by real revenue?"));
+
+      expect(resolveCompanyTickerMock).toHaveBeenCalledWith("Nvidia", "NVDA");
+      expect(result.tickers).toEqual(["NVDA"]);
+      expect(result.intent).toBe("single_report");
+      expect(result.activeCapabilities).toEqual(["growth_authenticity"]);
+    });
+
+    it("drops an unresolved company-name guess and logs it to dataErrors, without failing the request", async () => {
+      resolveCompanyTickerMock.mockResolvedValue(null);
+      fakeStructuredLlm("single_report", [{ name: "Nvidia", guessedTicker: "ZZZZ" }]);
+
+      const result = await supervisorNode(stateWith("is Nvidia's growth real?"));
+
+      expect(result.tickers).toEqual([]);
+      // No ticker resolved and single_report requires one, so this degrades
+      // to no capability activated — an honest "couldn't find it", not a
+      // fabricated result.
+      expect(result.activeCapabilities).toEqual([]);
+      expect(result.dataErrors).toEqual([
+        expect.stringContaining('Could not resolve "Nvidia"'),
+      ]);
+    });
+
+    it("dedupes a guess that duplicates a regex-detected ticker rather than double-counting it", async () => {
+      resolveCompanyTickerMock.mockResolvedValue({ symbol: "AMD", name: "Advanced Micro Devices" });
+      fakeStructuredLlm("portfolio_scan", [{ name: "AMD", guessedTicker: "AMD" }]);
+
+      const result = await supervisorNode(stateWith("compare NVDA and AMD"));
+
+      expect(result.tickers).toEqual(["AMD", "NVDA"]);
+    });
+
+    it("enforces the per-request resolution cap and notes the overflow in dataErrors", async () => {
+      resolveCompanyTickerMock.mockImplementation(async (_name, guessedTicker) => ({
+        symbol: guessedTicker,
+        name: guessedTicker,
+      }));
+      const mentions: CompanyMention[] = [
+        { name: "Company A", guessedTicker: "AAAA" },
+        { name: "Company B", guessedTicker: "BBBB" },
+        { name: "Company C", guessedTicker: "CCCC" },
+        { name: "Company D", guessedTicker: "DDDD" },
+        { name: "Company E", guessedTicker: "EEEE" },
+        { name: "Company F", guessedTicker: "FFFF" },
+      ];
+      fakeStructuredLlm("portfolio_scan", mentions);
+
+      const result = await supervisorNode(stateWith("compare six companies"));
+
+      expect(resolveCompanyTickerMock).toHaveBeenCalledTimes(5);
+      expect(result.dataErrors).toEqual([
+        expect.stringContaining("1 additional company name(s)"),
+      ]);
+    });
+
+    it("skips company-mention resolution entirely on the LLM-failure fallback path", async () => {
+      failingStructuredLlm(new Error("rate limited"));
+
+      await supervisorNode(stateWith("is Nvidia's growth real?"));
+
+      expect(resolveCompanyTickerMock).not.toHaveBeenCalled();
+    });
+
+    it("degrades a per-mention resolution failure to a dataErrors note rather than crashing the request", async () => {
+      resolveCompanyTickerMock.mockRejectedValue(new Error("network error"));
+      fakeStructuredLlm("single_report", [{ name: "Nvidia", guessedTicker: "NVDA" }]);
+
+      const result = await supervisorNode(stateWith("is Nvidia's growth real?"));
+
+      expect(result.intent).toBe("single_report");
+      expect(result.tickers).toEqual([]);
+      expect(result.dataErrors).toEqual([
+        expect.stringContaining('Could not resolve "Nvidia"'),
+      ]);
+    });
   });
 
   // THE FALLBACK PATH — see supervisor.ts's file header. This node gates the

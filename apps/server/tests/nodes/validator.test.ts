@@ -14,12 +14,21 @@ import type {
   GrowthAuthenticityResult,
   SectorLeader,
   SectorRanking,
+  TechnicalAnalysisResult,
 } from "../../src/state.js";
 import {
   PERCENTAGE_TOLERANCE,
+  PRICE_RELATIVE_TOLERANCE,
+  checkBothMethodsLabeled,
   checkClassificationNarrated,
+  checkPriceLevelsCited,
+  checkStanceNarrated,
+  checkSymbolNarrated,
   collectGrowthKnownValues,
   collectKnownValues,
+  collectTechnicalAnalysisKnownValues,
+  collectTechnicalAnalysisPriceLevels,
+  extractDollarAmounts,
   extractPercentages,
   extractTickers,
   validatorNode,
@@ -68,12 +77,20 @@ function stateWith(draftReport: string | null, overrides: Partial<AgentState> = 
     sectorRankings: RANKINGS,
     sectorLeaders: LEADERS,
     trendDataErrors: [],
+    partialHoldingsSectors: [],
     revenueGrowth: null,
     priceRevenueDiscrepancy: null,
     inorganicSignal: null,
     sectorBenchmark: null,
     growthAuthenticity: null,
     growthCheckErrors: [],
+    portfolioGrowthResults: null,
+    tickerComparison: null,
+    portfolioScanErrors: [],
+    companySnapshots: null,
+    companySnapshotErrors: [],
+    technicalAnalysis: null,
+    technicalAnalysisErrors: [],
     dataErrors: [],
     draftReport,
     validationPassed: false,
@@ -464,5 +481,242 @@ describe("validatorNode — growth-authenticity integration", () => {
     );
     expect(result.validationPassed).toBe(false);
     expect(result.validationNotes!.join(" ")).toMatch(/TSLA/);
+  });
+});
+
+// =============================================================================
+// technical-analysis (§14.13): dollar-figure verification, symbol narration,
+// stance narration, and the two-methodology labelling backstop.
+// =============================================================================
+
+const TECHNICAL_ANALYSIS: TechnicalAnalysisResult = {
+  symbol: "NVDA",
+  requestedAs: "ticker",
+  sectorName: null,
+  timeWindow: "3mo",
+  indicators: {
+    sma20: 140.2,
+    sma50: 132.5,
+    sma200: 115.8,
+    ema12: 141.1,
+    ema26: 136.4,
+    rsi14: 58.3,
+    macd: { macdLine: 2.1, signalLine: 1.7, histogram: 0.4 },
+    atr14: 4.2,
+    bollinger: { middle: 140.2, upper: 150.1, lower: 130.3 },
+    latestClose: 142.5,
+    asOfDate: "2026-08-01",
+  },
+  trendDirection: "uptrend",
+  momentumDirection: "neutral",
+  volatilityLevel: "normal",
+  supportLevels: [{ price: 135.0, kind: "support", touches: 3 }],
+  resistanceLevels: [{ price: 150.0, kind: "resistance", touches: 2 }],
+  atrLevels: { entry: 135.0, stopLoss: 128.7, takeProfit: 147.6, basisNote: "ATR-based." },
+  swingLevels: { entry: 135.0, stopLoss: 133.1, takeProfit: 150.0, basisNote: "Swing-based." },
+  stance: "bullish_setup",
+  stanceReasonCodes: ["trend:uptrend", "momentum:neutral"],
+};
+
+/** A sector-ETF result — XLK is a TICKER_STOPWORDS entry, the load-bearing edge case §14.13 exists for. */
+const SECTOR_ETF_RESULT: TechnicalAnalysisResult = {
+  ...TECHNICAL_ANALYSIS,
+  symbol: "XLK",
+  requestedAs: "sector_etf",
+  sectorName: "Information Technology",
+};
+
+describe("extractDollarAmounts", () => {
+  it("finds plain and comma-grouped dollar figures", () => {
+    expect(extractDollarAmounts("stop at $128.70, target $1,234.50")).toEqual([128.7, 1234.5]);
+  });
+
+  it("returns empty when there are no dollar-prefixed figures", () => {
+    expect(extractDollarAmounts("RSI is 58.3 and the trend is up")).toEqual([]);
+  });
+});
+
+describe("collectTechnicalAnalysisPriceLevels", () => {
+  it("collects support/resistance levels and both methodologies' levels", () => {
+    const levels = collectTechnicalAnalysisPriceLevels([TECHNICAL_ANALYSIS]);
+    expect(levels).toEqual(
+      expect.arrayContaining([135.0, 150.0, 128.7, 147.6, 133.1, 150.0, 142.5]),
+    );
+  });
+
+  it("handles null without throwing", () => {
+    expect(collectTechnicalAnalysisPriceLevels(null)).toEqual([]);
+  });
+});
+
+describe("collectTechnicalAnalysisKnownValues", () => {
+  it("collects the symbol and indicator values alongside the price levels", () => {
+    const known = collectTechnicalAnalysisKnownValues([TECHNICAL_ANALYSIS]);
+    expect(known.tickers.has("NVDA")).toBe(true);
+    expect(known.numbers).toEqual(expect.arrayContaining([58.3, 4.2, 128.7]));
+  });
+});
+
+describe("checkSymbolNarrated", () => {
+  it("passes when the symbol is named", () => {
+    expect(checkSymbolNarrated("NVDA is in an uptrend.", TECHNICAL_ANALYSIS)).toBeNull();
+  });
+
+  it("fails when the symbol is missing", () => {
+    const note = checkSymbolNarrated("This stock is in an uptrend.", TECHNICAL_ANALYSIS);
+    expect(note).not.toBeNull();
+    expect(note).toMatch(/NVDA/);
+  });
+
+  it("REGRESSION: catches a wrong sector-ETF symbol that extractTickers-based check 1 would miss", () => {
+    // XLK is in TICKER_STOPWORDS (validator.ts), added so prose mentioning an
+    // ETF isn't flagged as an unknown ticker — but that means a report naming
+    // the WRONG ETF passes the generic check silently. checkSymbolNarrated is
+    // the dedicated backstop for exactly this case.
+    const draftNamingWrongEtf = "XLY is in an uptrend with a stop at $128.70.";
+    expect(checkSymbolNarrated(draftNamingWrongEtf, SECTOR_ETF_RESULT)).not.toBeNull();
+
+    // And check 1 (extractTickers) really does let it through silently:
+    expect(extractTickers(draftNamingWrongEtf)).toEqual([]);
+  });
+});
+
+describe("checkStanceNarrated", () => {
+  it("passes when the draft states the computed stance", () => {
+    const note = checkStanceNarrated(
+      "NVDA is in a bullish setup, buying opportunity on the pullback.",
+      TECHNICAL_ANALYSIS,
+    );
+    expect(note).toBeNull();
+  });
+
+  it("fails when the draft narrates a different stance", () => {
+    const note = checkStanceNarrated(
+      "NVDA shows no clear setup right now.",
+      TECHNICAL_ANALYSIS,
+    );
+    expect(note).not.toBeNull();
+    expect(note).toMatch(/bullish_setup/);
+  });
+});
+
+describe("checkBothMethodsLabeled", () => {
+  it("passes when both methodologies are labelled", () => {
+    const note = checkBothMethodsLabeled(
+      "Using ATR-based levels, stop at $128.70. Using swing-based levels, stop at $133.10.",
+      TECHNICAL_ANALYSIS,
+    );
+    expect(note).toBeNull();
+  });
+
+  it("fails when the ATR-based levels are quoted without being labelled", () => {
+    const note = checkBothMethodsLabeled(
+      "Stop at $128.70, target $147.60. Swing stop at $133.10.",
+      TECHNICAL_ANALYSIS,
+    );
+    expect(note).not.toBeNull();
+    expect(note).toMatch(/ATR/);
+  });
+
+  it("only requires a label for a methodology that actually produced a level", () => {
+    const noSwing: TechnicalAnalysisResult = {
+      ...TECHNICAL_ANALYSIS,
+      swingLevels: { entry: null, stopLoss: null, takeProfit: null, basisNote: "no swing point" },
+    };
+    const note = checkBothMethodsLabeled("ATR-based stop at $128.70.", noSwing);
+    expect(note).toBeNull();
+  });
+});
+
+describe("checkPriceLevelsCited", () => {
+  it("passes when every cited dollar figure matches a computed level", () => {
+    const note = checkPriceLevelsCited(
+      "ATR stop at $128.70, swing stop at $133.10.",
+      [TECHNICAL_ANALYSIS],
+    );
+    expect(note).toBeNull();
+  });
+
+  it("allows ordinary rounding within the relative tolerance", () => {
+    const note = checkPriceLevelsCited("ATR stop at approximately $128.71.", [TECHNICAL_ANALYSIS]);
+    expect(note).toBeNull();
+  });
+
+  it("rejects a fabricated price level", () => {
+    const note = checkPriceLevelsCited("ATR stop at $999.99.", [TECHNICAL_ANALYSIS]);
+    expect(note).not.toBeNull();
+    expect(note).toMatch(/999.99/);
+  });
+
+  it("uses a tolerance tight enough to be meaningful", () => {
+    expect(PRICE_RELATIVE_TOLERANCE).toBeLessThanOrEqual(0.01);
+  });
+});
+
+describe("validatorNode — technical-analysis integration", () => {
+  function taState(draftReport: string, overrides: Partial<AgentState> = {}): AgentState {
+    return stateWith(draftReport, {
+      intent: "technical_analysis",
+      activeCapabilities: ["technical_analysis"],
+      sectorRankings: null,
+      sectorLeaders: null,
+      technicalAnalysis: [TECHNICAL_ANALYSIS],
+      ...overrides,
+    });
+  }
+
+  it("passes a well-formed report citing real levels, symbol, stance, and both methods", () => {
+    const result = validatorNode(
+      taState(
+        "NVDA is in a bullish setup. Using ATR-based levels, enter at $135.00, stop at $128.70, " +
+          "target $147.60. Using swing-based levels, enter at $135.00, stop at $133.10, target $150.00.",
+      ),
+    );
+    expect(result.validationPassed).toBe(true);
+  });
+
+  it("rejects a fabricated stop-loss level", () => {
+    const result = validatorNode(
+      taState(
+        "NVDA is in a bullish setup. ATR-based stop at $75.00. Swing-based stop at $133.10.",
+      ),
+    );
+    expect(result.validationPassed).toBe(false);
+    expect(result.validationNotes!.join(" ")).toMatch(/75/);
+  });
+
+  it("rejects a report that never names the symbol", () => {
+    const result = validatorNode(
+      taState("This stock is bullish. ATR stop at $128.70. Swing stop at $133.10."),
+    );
+    expect(result.validationPassed).toBe(false);
+    expect(result.validationNotes!.join(" ")).toMatch(/NVDA/);
+  });
+
+  it("rejects a report that narrates the wrong stance", () => {
+    const result = validatorNode(
+      taState("NVDA shows no clear setup. ATR stop at $128.70. Swing stop at $133.10."),
+    );
+    expect(result.validationPassed).toBe(false);
+    expect(result.validationNotes!.join(" ")).toMatch(/bullish_setup/);
+  });
+
+  it("rejects levels quoted without either methodology being labelled", () => {
+    const result = validatorNode(taState("NVDA is bullish. Stop at $128.70, target $147.60."));
+    expect(result.validationPassed).toBe(false);
+  });
+
+  it("REGRESSION: a well-formed report with zero percentage figures still passes (§ check 3 fix)", () => {
+    // Technical-analysis's headline output is dollar prices, not percentages
+    // — a valid report can legitimately cite none. Before the fix, check 3
+    // would reject every correct technical-analysis report on this basis.
+    const result = validatorNode(
+      taState(
+        "NVDA is in a bullish setup. ATR-based: entry $135.00, stop $128.70, target $147.60. " +
+          "Swing-based: entry $135.00, stop $133.10, target $150.00.",
+      ),
+    );
+    expect(extractPercentages(result.finalReport ?? "")).toEqual([]);
+    expect(result.validationPassed).toBe(true);
   });
 });

@@ -93,6 +93,24 @@ export class AlphaVantageApiError extends Error {
 }
 
 /**
+ * Recover the `AlphaVantageApiError` behind a caught error, if there is one.
+ *
+ * Every external call goes through `tools/cache.ts::withCache` (§6), which
+ * rethrows fetcher failures as a plain `Error` (`"${source}/${endpoint}
+ * request failed: ..."`) with the original preserved on `.cause`. That means
+ * `error instanceof AlphaVantageApiError` is FALSE for every AV error a node
+ * actually catches — including `isRateLimit` — because the cache layer erases
+ * the type on its way through. Callers that need `isRateLimit` (§5.7's
+ * quota-exhaustion degrade path) must unwrap `.cause` to see it; this is the
+ * one place that logic lives, so it can't drift between call sites.
+ */
+export function asAlphaVantageError(error: unknown): AlphaVantageApiError | null {
+  if (error instanceof AlphaVantageApiError) return error;
+  if (error instanceof Error && error.cause instanceof AlphaVantageApiError) return error.cause;
+  return null;
+}
+
+/**
  * Inspect a decoded Alpha Vantage body and throw if it carries an error.
  *
  * MUST be called before any data schema is applied — see the header note on

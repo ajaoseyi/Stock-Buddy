@@ -1,23 +1,21 @@
 /**
  * =============================================================================
- * tests/nodes/growth-authenticity-stats.test.ts
+ * tests/lib/stats.test.ts
  * =============================================================================
  *
- * `robustZScore` is the load-bearing statistic behind every threshold in this
- * capability. The MAD-outlier-resistance test below is the concrete
+ * `robustZScore` is the load-bearing statistic behind growth-authenticity's
+ * thresholds AND company-snapshot's peer-relative valuation/health metrics
+ * (CLAUDE.md §13.5/§13.6) — this module was promoted from growth-
+ * authenticity's own former `stats.ts` once company-snapshot became its
+ * third consumer. The MAD-outlier-resistance test below is the concrete
  * regression test for the risk called out in the design: a single genuine
- * past event (an actual prior acquisition or earnings collapse) inside the
- * lookback window should not blow out the baseline and mask a NEW one — which
- * is exactly what a naive mean/stdDev z-score would do.
+ * past event (an actual prior acquisition or earnings collapse, or an
+ * unusually priced peer) should not blow out the baseline and mask a NEW
+ * one — which is exactly what a naive mean/stdDev z-score would do.
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  MIN_BASELINE_QUARTERS,
-  medianAbsoluteDeviation,
-  median,
-  robustZScore,
-} from "../../src/nodes/capabilities/growth-authenticity/stats.js";
+import { MIN_BASELINE_QUARTERS, medianAbsoluteDeviation, median, robustZScore } from "../../src/lib/stats.js";
 
 describe("median", () => {
   it("returns the middle value for an odd-length array", () => {

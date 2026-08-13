@@ -588,7 +588,7 @@ export function App() {
       {view === "landing" && (
         <div className="sfs-landing">
           <div>
-            <h1>What do you want to understand today?</h1>
+            <h1>What do you  want to understand today?</h1>
             <p className="text-muted sfs-landing-sub">
               Ask about sector trends, momentum, or the companies leading them. Every answer shows
               its work.
@@ -732,9 +732,18 @@ export function App() {
               links={narrativeLinks}
             />
 
+            {/*
+              `dataErrors` is preferred here because it is never about one
+              particular sector — every entry applies regardless of what was
+              asked, whereas `trendDataErrors[0]` is whatever the pipeline
+              happened to report first (e.g. a different, unrelated sector's
+              cross-check failure) and reads as if it applies to this answer
+              even when it doesn't. The full, unscoped list of both is still
+              available below in DataNotesPanel for anyone auditing the run.
+            */}
             {(result.dataErrors.length > 0 || result.trendDataErrors.length > 0) && (
               <div className="text-muted sfs-note">
-                &#9679; {result.trendDataErrors[0] ?? result.dataErrors[0]}
+                &#9679; {result.dataErrors[0] ?? result.trendDataErrors[0]}
               </div>
             )}
 

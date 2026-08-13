@@ -62,13 +62,11 @@ export function SectorRankingsTable({
   activeSector,
   onSelectSector,
 }: SectorRankingsTableProps) {
+  // No sector data for this request (e.g. a single-ticker or portfolio-scan
+  // query, where sector rankings were never computed) — render nothing rather
+  // than an empty grid implying sector data should have been here.
   if (rankings.length === 0) {
-    return (
-      <section>
-        <h6 style={{ marginBottom: "var(--space-3)" }}>Sector Rankings</h6>
-        <p className="text-muted sfs-empty">No sector data was available for this request.</p>
-      </section>
-    );
+    return null;
   }
 
   // Most positive to most negative — §5.3's contract for `sectorRankings`.

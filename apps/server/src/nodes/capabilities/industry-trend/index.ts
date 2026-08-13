@@ -19,14 +19,22 @@
  * │                                                                           │
  * │ READS (set upstream by the supervisor; never modified here)               │
  * │   timeWindow          the lookback period, e.g. "1mo"                     │
- * │   sectors             optional user-specified sector filter; empty means  │
- * │                       "rank all 11"                                       │
+ * │   sectors             optional user-named sector(s); always ranked as     │
+ * │                       part of all 11, but also FORCED into the leader     │
+ * │                       breakdown (sector-leaders.ts) even if not one of    │
+ * │                       the period's top/bottom N movers. Empty means no    │
+ * │                       sector was named — leaders stay top/bottom-N-only.  │
  * │   activeCapabilities  used only by graph.ts to decide whether we run      │
  * │                                                                           │
  * │ WRITES (owned exclusively by this capability)                             │
  * │   sectorRankings      sector-trend.ts   — all 11 sectors, ranked          │
  * │   sectorLeaders       sector-leaders.ts — per-sector leader lists         │
  * │   trendDataErrors     both nodes        — non-fatal degradation notes     │
+ * │   partialHoldingsSectors  sector-leaders.ts — sectors whose weight data   │
+ * │                       came from Yahoo's top-10 fallback, not Alpha        │
+ * │                       Vantage's full list; report-writer.ts reads this    │
+ * │                       to decide whether a requested sector's data is      │
+ * │                       good enough to narrate                             │
  * │                                                                           │
  * │ MUST NEVER TOUCH                                                          │
  * │   draftReport, finalReport, validationPassed, validationNotes,            │

@@ -61,12 +61,20 @@ function stateWith(overrides: Partial<AgentState> = {}): AgentState {
     sectorRankings: null,
     sectorLeaders: null,
     trendDataErrors: [],
+    partialHoldingsSectors: [],
     revenueGrowth: null,
     priceRevenueDiscrepancy: null,
     inorganicSignal: null,
     sectorBenchmark: null,
     growthAuthenticity: null,
     growthCheckErrors: [],
+    portfolioGrowthResults: null,
+    tickerComparison: null,
+    portfolioScanErrors: [],
+    companySnapshots: null,
+    companySnapshotErrors: [],
+    technicalAnalysis: null,
+    technicalAnalysisErrors: [],
     dataErrors: [],
     draftReport: null,
     validationPassed: false,
@@ -143,6 +151,12 @@ describe("routeAfterSupervisor — the plugin seam", () => {
   it("routes a growth_authenticity request into the capability's first node", () => {
     expect(routeAfterSupervisor(stateWith({ activeCapabilities: ["growth_authenticity"] }))).toBe(
       NODES.revenueGrowth,
+    );
+  });
+
+  it("routes a technical_analysis request into the capability", () => {
+    expect(routeAfterSupervisor(stateWith({ activeCapabilities: ["technical_analysis"] }))).toBe(
+      NODES.technicalAnalysisScan,
     );
   });
 });
@@ -297,7 +311,7 @@ describe("The compiled graph, end to end", () => {
     expect(result.sectorRankings).toHaveLength(11);
   });
 
-  it("skips the capability entirely for an unimplemented intent", async () => {
+  it("skips the capability entirely when portfolio_scan is asked with no named ticker", async () => {
     scriptedLlm(["should not be called"]);
 
     const result = (await buildGraph().invoke({
@@ -309,7 +323,35 @@ describe("The compiled graph, end to end", () => {
     expect(result.intent).toBe("portfolio_scan");
     expect(mocks.fetchSectorEtfHistory).not.toHaveBeenCalled();
     expect(result.sectorRankings).toBeNull(); // never ran, as distinct from []
-    expect(result.finalReport).toMatch(/outside what this agent can currently analyse/);
+    // §12.2's own honest message — no ticker named, no LLM call.
+    expect(result.finalReport).toMatch(/need at least one to check/);
+  });
+
+  // A sector the user explicitly named, whose weight data fell back to
+  // Yahoo's top-10 holdings (Alpha Vantage quota exhausted): the report
+  // writer declines to narrate it rather than present a quietly incomplete
+  // picture, and never calls the LLM to do so.
+  it("gates the report instead of narrating when the requested sector's holdings are partial", async () => {
+    const invoke = scriptedLlm(["should not be called"]);
+    mocks.fetchEtfHoldings.mockImplementation(async (etf: string) => ({
+      holdings: [{ ticker: etf === "XLK" ? "MSFT" : "AAA", weightPct: 7.23 }],
+      source: etf === "XLK" ? "yahoo_top_holdings" : "alpha_vantage_etf_profile",
+      warnings: [],
+      isPartial: etf === "XLK",
+    }));
+
+    const result = (await buildGraph().invoke({
+      messages: [new HumanMessage("what stocks should i buy in the tech sector")],
+      intent: "sector_trend",
+      timeWindow: "1mo",
+    })) as AgentState;
+
+    expect(result.sectors).toEqual(["Information Technology"]);
+    expect(result.partialHoldingsSectors).toEqual(["Information Technology"]);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(result.finalReport).toMatch(/Information Technology/);
+    expect(result.finalReport).toMatch(/quota is exhausted/i);
+    expect(result.validationPassed).toBe(true);
   });
 
   it("still produces rankings when the LLM is entirely unavailable", async () => {
@@ -332,6 +374,50 @@ describe("The compiled graph, end to end", () => {
     // failure, and the run terminates rather than hanging.
     expect(result.sectorRankings).toHaveLength(11);
     expect(result.dataErrors.join(" ")).toMatch(/Report generation failed/);
+  });
+
+  it("routes technical_analysis requests to the capability, populates real data, and terminates", async () => {
+    // Override the default 2-bar fixture with enough healthy history for the
+    // indicators to actually resolve.
+    mocks.fetchConstituentOhlcv.mockImplementation(async (ticker: string) => {
+      const quotes = [];
+      let price = 100;
+      for (let i = 0; i < 300; i++) {
+        price += 0.15;
+        quotes.push({
+          date: new Date(2024, 0, i + 1),
+          open: price,
+          high: price + 0.5,
+          low: price - 0.5,
+          close: price,
+          volume: 1000,
+        });
+      }
+      return { meta: { symbol: ticker }, quotes };
+    });
+    scriptedLlm([
+      "NVDA shows a bullish setup, a buying opportunity. ATR-based levels and " +
+        "swing-based levels are both provided above.",
+    ]);
+
+    const result = (await buildGraph().invoke({
+      messages: [new HumanMessage("give me an entry point and stop loss for NVDA")],
+      intent: "sector_trend",
+      timeWindow: "1mo",
+    })) as AgentState;
+
+    // Supervisor's regex fallback routed this correctly (the scripted LLM
+    // stub has no withStructuredOutput, so classifyIntentLlm throws and
+    // supervisorNode falls back to classifyIntent).
+    expect(result.activeCapabilities).toEqual(["technical_analysis"]);
+    expect(result.technicalAnalysis).toHaveLength(1);
+    expect(result.technicalAnalysis![0]!.symbol).toBe("NVDA");
+    expect(result.technicalAnalysis![0]!.stance).not.toBe("insufficient_data");
+    // Zero Alpha Vantage spend (§14's explicit budget win) — this capability
+    // never touches that fetcher at all.
+    expect(mocks.fetchDailySeries).not.toHaveBeenCalled();
+    // The run terminates either way (validated or salvaged) rather than hanging.
+    expect(result.finalReport).not.toBeNull();
   });
 
   it("honours the append reducer on messages", async () => {

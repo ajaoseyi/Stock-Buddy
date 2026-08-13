@@ -95,7 +95,25 @@ export type CacheNamespace =
    * going stale for a whole quarter — placeholder pending real-world tuning,
    * same as this capability's classification thresholds.
    */
-  | "quarterly_fundamentals";
+  | "quarterly_fundamentals"
+  /**
+   * Combined `quoteSummary` bundle (assetProfile + summaryDetail +
+   * defaultKeyStatistics + financialData), for the company-snapshot capability
+   * (CLAUDE.md §13.2a). A deliberate single TTL for a mixed-cadence payload —
+   * some fields (trailingPE, marketCap) move daily with price, others
+   * (debtToEquity, returnOnEquity) only change quarterly. 24h matches the
+   * fastest-moving fields; splitting the TTL per field would mean splitting the
+   * underlying call back into four, undoing the combined-call saving.
+   */
+  | "company_fundamentals_snapshot"
+  /**
+   * Yahoo `search()` symbol/name lookups, used to verify an LLM-guessed
+   * ticker for a company name mentioned in a user message (supervisor.ts).
+   * Indefinite TTL for the same reason as `company_profile`: a company's
+   * ticker mapping does not change day to day, so re-verifying costs a
+   * free-tier call for no benefit.
+   */
+  | "ticker_lookup";
 
 /**
  * Time-to-live per namespace, in milliseconds.
@@ -118,6 +136,8 @@ export const TTL_BY_NAMESPACE: Record<CacheNamespace, number | null> = {
   daily_ohlcv: 24 * HOUR,
   company_profile: null,
   quarterly_fundamentals: 14 * DAY,
+  company_fundamentals_snapshot: 24 * HOUR,
+  ticker_lookup: null,
 };
 
 // =============================================================================

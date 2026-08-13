@@ -14,20 +14,21 @@
  *                          │
  *                  ┌────────▼─────────┐
  *                  │routeAfterSupervisor│  conditional edge — one branch per
- *                  └──┬──────┬──────┬─┘  implemented capability
- *        industry_trend│  single_report│  anything else (no capability)
- *                       │       │       │
- *              sectorTrend  revenueGrowth│
- *                   │            │       │
- *              sectorLeaders  priceRevenueDiscrepancy
- *                   │            │
- *                   │       inorganicSignal
- *                   │            │
- *                   │       sectorBenchmark
- *                   │            │
- *                   │       growthClassification
- *                   │            │
- *                    ┌───────────▼┐
+ *                  └┬────┬──────┬────┬┬────┬─┘  implemented capability
+ *    industry_trend │single_report│portfolio_scan│company_snapshot│technical_analysis│ anything else
+ *                    │      │      │             │                │            │ (no capability
+ *           sectorTrend revenueGrowth portfolioGrowthScan companySnapshotScan technicalAnalysisScan │ — a followup
+ *                │            │       (§12, a single   (§13, the ONE  (§14, the ONE │ reusing prior
+ *           sectorLeaders priceRevenueDiscrepancy orchestration  node this   node this  │ state, or an
+ *                │            │       node, not a  capability   capability │ honest "not
+ *                │       inorganicSignal chain)    registers)   registers) │ supported")
+ *                │            │            │            │            │           │
+ *                │       sectorBenchmark   │            │            │           │
+ *                │            │       tickerComparison  │            │           │
+ *                │       growthClassification (§12.8)   │            │           │
+ *                │            │            │            │            │           │
+ *                 └───────────┼────────────┴────────────┴────────────┴───────────┘
+ *                    ┌─────────▼──┐
  *                    │reportWriter│◄──────────┐  the correction loop
  *                    └─────┬──────┘           │
  *                          │                  │
@@ -86,6 +87,19 @@ import {
   revenueGrowthNode,
   sectorBenchmarkNode,
 } from "./nodes/capabilities/growth-authenticity/index.js";
+import {
+  PORTFOLIO_SCAN_CAPABILITY_ID,
+  portfolioGrowthScanNode,
+  tickerComparisonNode,
+} from "./nodes/capabilities/portfolio-scan/index.js";
+import {
+  COMPANY_SNAPSHOT_CAPABILITY_ID,
+  companySnapshotScanNode,
+} from "./nodes/capabilities/company-snapshot/index.js";
+import {
+  TECHNICAL_ANALYSIS_CAPABILITY_ID,
+  technicalAnalysisScanNode,
+} from "./nodes/capabilities/technical-analysis/index.js";
 
 // =============================================================================
 // SECTION 1 — Graph state
@@ -138,6 +152,10 @@ export const NODES = {
   inorganicSignal: "inorganic_signal",
   sectorBenchmark: "sector_benchmark",
   growthClassification: "growth_classification",
+  portfolioGrowthScan: "portfolio_growth_scan",
+  tickerComparison: "ticker_comparison",
+  companySnapshotScan: "company_snapshot_scan",
+  technicalAnalysisScan: "technical_analysis_scan",
   reportWriter: "report_writer",
   validator: "validator",
 } as const;
@@ -149,8 +167,10 @@ export const NODES = {
  * here and a node registration below — no existing capability's code changes.
  *
  * When no implemented capability matches, we route directly to the report
- * writer, which produces an honest "not supported yet" answer. Routing to END
- * instead would return an empty report and leave the API with nothing to say.
+ * writer, which produces an honest "not supported yet" answer (or, for
+ * `followup`, re-narrates data already in state — see report-writer.ts).
+ * Routing to END instead would return an empty report and leave the API with
+ * nothing to say.
  */
 export function routeAfterSupervisor(state: AgentState): string {
   if (state.activeCapabilities.includes(INDUSTRY_TREND_CAPABILITY_ID)) {
@@ -158,6 +178,15 @@ export function routeAfterSupervisor(state: AgentState): string {
   }
   if (state.activeCapabilities.includes(GROWTH_AUTHENTICITY_CAPABILITY_ID)) {
     return NODES.revenueGrowth;
+  }
+  if (state.activeCapabilities.includes(PORTFOLIO_SCAN_CAPABILITY_ID)) {
+    return NODES.portfolioGrowthScan;
+  }
+  if (state.activeCapabilities.includes(COMPANY_SNAPSHOT_CAPABILITY_ID)) {
+    return NODES.companySnapshotScan;
+  }
+  if (state.activeCapabilities.includes(TECHNICAL_ANALYSIS_CAPABILITY_ID)) {
+    return NODES.technicalAnalysisScan;
   }
   return NODES.reportWriter;
 }
@@ -275,6 +304,34 @@ export function buildGraph(checkpointer?: Checkpointer) {
       growthClassificationNode(state as AgentState, config),
     )
 
+    // --- Capability: portfolio-scan (§12) -----------------------------------
+    // A SINGLE orchestration node, not a five-node chain: it drives the five
+    // growth-authenticity node functions above internally, once per ticker,
+    // outside this graph's own state channels (see the capability's index.ts).
+    .addNode(NODES.portfolioGrowthScan, (state, config) =>
+      portfolioGrowthScanNode(state as AgentState, undefined, config),
+    )
+    // §12.8: runs AFTER portfolioGrowthScan, reading `portfolioGrowthResults`
+    // it just wrote. A no-op (`tickerComparison: null`) when fewer than 2
+    // tickers were analysed.
+    .addNode(NODES.tickerComparison, (state, config) =>
+      tickerComparisonNode(state as AgentState, undefined, config),
+    )
+
+    // --- Capability: company-snapshot (§13) ---------------------------------
+    // The ONE node this capability registers — see company-snapshot-scan.ts
+    // for why this is a loop-driving node rather than a chain (§13.7).
+    .addNode(NODES.companySnapshotScan, (state, config) =>
+      companySnapshotScanNode(state as AgentState, undefined, config),
+    )
+
+    // --- Capability: technical-analysis (§14) -------------------------------
+    // The ONE node this capability registers, same reasoning as company-
+    // snapshot above — see technical-analysis-scan.ts.
+    .addNode(NODES.technicalAnalysisScan, (state, config) =>
+      technicalAnalysisScanNode(state as AgentState, undefined, config),
+    )
+
     // --- Report + validation ------------------------------------------------
     .addNode(NODES.reportWriter, (state, config) => reportWriterNode(state as AgentState, config))
     .addNode(NODES.validator, (state, config) => {
@@ -294,6 +351,9 @@ export function buildGraph(checkpointer?: Checkpointer) {
     .addConditionalEdges(NODES.supervisor, (state) => routeAfterSupervisor(state as AgentState), [
       NODES.sectorTrend,
       NODES.revenueGrowth,
+      NODES.portfolioGrowthScan,
+      NODES.companySnapshotScan,
+      NODES.technicalAnalysisScan,
       NODES.reportWriter,
     ])
     .addEdge(NODES.sectorTrend, NODES.sectorLeaders)
@@ -303,6 +363,10 @@ export function buildGraph(checkpointer?: Checkpointer) {
     .addEdge(NODES.inorganicSignal, NODES.sectorBenchmark)
     .addEdge(NODES.sectorBenchmark, NODES.growthClassification)
     .addEdge(NODES.growthClassification, NODES.reportWriter)
+    .addEdge(NODES.portfolioGrowthScan, NODES.tickerComparison)
+    .addEdge(NODES.tickerComparison, NODES.reportWriter)
+    .addEdge(NODES.companySnapshotScan, NODES.reportWriter)
+    .addEdge(NODES.technicalAnalysisScan, NODES.reportWriter)
     .addEdge(NODES.reportWriter, NODES.validator)
     .addConditionalEdges(NODES.validator, (state) => routeAfterValidation(state as AgentState), [
       NODES.reportWriter,

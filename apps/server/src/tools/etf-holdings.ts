@@ -50,7 +50,7 @@
  * every quadrant assignment while still producing numbers that look ordinary.
  */
 
-import { AlphaVantageApiError, fetchEtfProfile } from "./alpha-vantage.js";
+import { asAlphaVantageError, fetchEtfProfile } from "./alpha-vantage.js";
 import { fetchFundTopHoldings } from "./yahoo-finance.js";
 
 // =============================================================================
@@ -158,10 +158,15 @@ export async function fetchEtfHoldings(
   } catch (error) {
     // Distinguish quota exhaustion from a genuine failure, because §5.7 treats
     // them differently in the narrative even though both fall back the same way.
+    // `asAlphaVantageError` unwraps `withCache`'s error wrapping (§6) — a plain
+    // `instanceof AlphaVantageApiError` check is always false past the cache
+    // layer, which silently broke this distinction (see sector-trend.ts's
+    // identical fix for the live symptom this caused).
+    const avError = asAlphaVantageError(error);
     const reason =
-      error instanceof AlphaVantageApiError && error.isRateLimit
+      avError !== null && avError.isRateLimit
         ? "Alpha Vantage daily quota exhausted"
-        : `Alpha Vantage unavailable (${error instanceof Error ? error.message : String(error)})`;
+        : `Alpha Vantage unavailable (${avError !== null ? avError.message : error instanceof Error ? error.message : String(error)})`;
 
     warnings.push(`${sectorName} (${etfTicker}): ${reason}; falling back to Yahoo top-10.`);
   }

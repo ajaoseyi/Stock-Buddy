@@ -22,7 +22,7 @@
  * normally is, so a flat spread cutoff would misfire across sectors the same
  * way a flat PP&E cutoff misfires across asset-heavy vs. asset-light
  * companies (`inorganic-signal.ts`). The target's own spread-vs-ETF is
- * z-scored (robust median/MAD, ./stats.ts) against a bounded sample of its
+ * z-scored (robust median/MAD, ../../../lib/stats.ts) against a bounded sample of its
  * sector peers' own spread-vs-ETF, computed over the same window.
  *
  * BOUNDED PEER SAMPLE, DELIBERATELY
@@ -46,7 +46,7 @@ import {
   fetchSectorEtfHistory,
 } from "../../../tools/yahoo-finance.js";
 import { computePctChangeFromBars } from "./price-revenue-discrepancy.js";
-import { ROBUST_Z_THRESHOLD, robustZScore } from "./stats.js";
+import { ROBUST_Z_THRESHOLD, robustZScore } from "../../../lib/stats.js";
 
 /**
  * Yahoo's `assetProfile.sector` taxonomy, mapped to the GICS names used by

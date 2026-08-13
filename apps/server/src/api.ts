@@ -6,8 +6,10 @@
  * CLAUDE.md §7:
  *   POST /api/analyze — body `{ query: string }`. Returns
  *   `{ finalReport, sectorRankings, sectorLeaders, dataErrors, trendDataErrors,
- *      growthAuthenticity, growthCheckErrors, timeWindow, validationPassed,
- *      threadId }`.
+ *      growthAuthenticity, growthCheckErrors, portfolioGrowthResults,
+ *      tickerComparison, portfolioScanErrors, companySnapshots,
+ *      companySnapshotErrors, technicalAnalysis, technicalAnalysisErrors,
+ *      timeWindow, validationPassed, threadId }`.
  *   CORS allows only the Vite dev origin in development.
  *
  * THIS FILE IS THE VALIDATION BOUNDARY — see §4.1(b)
@@ -99,6 +101,20 @@ export interface AnalyzeResponse {
   growthAuthenticity: AgentState["growthAuthenticity"];
   /** Non-fatal degradation notes specific to the growth-authenticity capability. */
   growthCheckErrors: string[];
+  /** The portfolio-scan capability's per-ticker results (§12), or null if it didn't run. */
+  portfolioGrowthResults: AgentState["portfolioGrowthResults"];
+  /** The comparative verdict across 2+ compared tickers (§12.8), or null. */
+  tickerComparison: AgentState["tickerComparison"];
+  /** Non-fatal degradation notes specific to the portfolio-scan capability. */
+  portfolioScanErrors: string[];
+  /** The company-snapshot capability's per-ticker results (§13), or null if it didn't run. */
+  companySnapshots: AgentState["companySnapshots"];
+  /** Non-fatal degradation notes specific to the company-snapshot capability. */
+  companySnapshotErrors: string[];
+  /** The technical-analysis capability's per-symbol results (§14), or null if it didn't run. */
+  technicalAnalysis: AgentState["technicalAnalysis"];
+  /** Non-fatal degradation notes specific to the technical-analysis capability. */
+  technicalAnalysisErrors: string[];
   /** Echoed back so the UI can label the tables with the period actually used. */
   timeWindow: string;
   /** True when validation passed; false means the report carries caveats. */
@@ -133,8 +149,12 @@ type ResolvedAnalyzeRequest =
  * Run boundary checks 1 and 2 (request body, then initial graph state) and
  * resolve the thread id and graph input. Does NOT run the graph — callers
  * decide whether to `.invoke()` or `.stream()` it.
+ *
+ * ASYNC because continuing an existing thread reads its current checkpoint
+ * (see the continuing-thread branch below) — a single extra SQLite read,
+ * negligible next to the graph run that follows.
  */
-function resolveAnalyzeRequest(body: unknown): ResolvedAnalyzeRequest {
+async function resolveAnalyzeRequest(body: unknown): Promise<ResolvedAnalyzeRequest> {
   // --- Boundary check 1: the request body itself ---------------------------
   const parsedBody = AnalyzeRequestSchema.safeParse(body);
   if (!parsedBody.success) {
@@ -172,24 +192,61 @@ function resolveAnalyzeRequest(body: unknown): ResolvedAnalyzeRequest {
   }
 
   // A new id per request unless the client is continuing an existing thread.
-  const isNewThread = parsedBody.data.threadId === undefined;
   const threadId = parsedBody.data.threadId ?? randomUUID();
+  const suppliedExistingThreadId = parsedBody.data.threadId !== undefined;
 
-  // On a NEW thread, `initialState` (with its provisional `intent`/`timeWindow`
-  // placeholders) is exactly what should seed the graph. On a CONTINUING
-  // thread, those same placeholders would OVERWRITE the checkpointer's
-  // persisted `intent`/`timeWindow` before `supervisorNode` ever runs — both
-  // are simple overwrite-reducer channels (§4.1(a)), so any field present in
-  // this input replaces the checkpointed value, present or not. `intent` gets
-  // unconditionally re-derived by the supervisor every turn regardless, so
-  // that loss is harmless — but `timeWindow` is what lets a `followup` question
-  // that doesn't restate a period ("what about the emerging movers?") still
-  // know which window the analysis it's following up on actually used. So only
-  // `messages` is sent on a continuing thread; every other field is left
-  // untouched, flowing through from the checkpoint as-is.
-  const graphInput: Partial<AgentState> = isNewThread
-    ? initialState
-    : { messages: initialState.messages };
+  // On a NEW thread (including a client-supplied id that has never actually
+  // run — see below), `initialState` — with its provisional `intent`/
+  // `timeWindow` placeholders — is exactly what should seed the graph.
+  //
+  // On a CONTINUING thread, those same placeholders must NOT simply be
+  // resent: they are simple overwrite-reducer channels (§4.1(a)), so any
+  // field present in this input replaces the checkpointed value outright.
+  // `intent` gets unconditionally re-derived by the supervisor every turn
+  // regardless, so resending it would be harmless either way — but
+  // `sectorRankings`/`sectorLeaders`/`growthAuthenticity`/
+  // `portfolioGrowthResults`/`timeWindow` are exactly what a `followup`
+  // question needs to reuse, and simply OMITTING them from this input does
+  // not reliably work.
+  //
+  // VERIFIED (not assumed) against `@langchain/langgraph@1.4.8`: a channel
+  // written by a node that does NOT run again in a given `.invoke()` is not
+  // reliably delivered to the nodes that DO run in that invoke, even though
+  // the checkpoint itself — confirmed via `getState()` and the raw
+  // `checkpoints` row — still holds the correct value. This bit `followup`
+  // directly: `sectorRankings` is written by `sectorTrendNode`, which does
+  // NOT run again on a follow-up turn, and omitting it from this input left
+  // `report-writer.ts`'s followup branch seeing `null` despite the
+  // checkpoint being intact. `timeWindow`, by contrast, is written by
+  // `supervisorNode` itself on EVERY turn (including a follow-up), and
+  // survived omission in testing — but that distinction is exactly the kind
+  // of thing not worth depending on staying true. All five are therefore
+  // read back explicitly from the current checkpoint and resent, rather than
+  // relying on implicit persistence for any of them.
+  let graphInput: Partial<AgentState>;
+  if (!suppliedExistingThreadId) {
+    graphInput = initialState;
+  } else {
+    const snapshot = await getGraph().getState({ configurable: { thread_id: threadId } });
+    const prior = snapshot.values as Partial<AgentState> | undefined;
+    if (prior === undefined || prior.messages === undefined) {
+      // The supplied thread id has no prior run (never used, or deleted) —
+      // nothing to continue, so this is a new thread in every way that
+      // matters here, same as the branch above.
+      graphInput = initialState;
+    } else {
+      graphInput = {
+        messages: initialState.messages,
+        timeWindow: prior.timeWindow ?? DEFAULT_TIME_WINDOW,
+        sectorRankings: prior.sectorRankings ?? null,
+        sectorLeaders: prior.sectorLeaders ?? null,
+        growthAuthenticity: prior.growthAuthenticity ?? null,
+        portfolioGrowthResults: prior.portfolioGrowthResults ?? null,
+        companySnapshots: prior.companySnapshots ?? null,
+        technicalAnalysis: prior.technicalAnalysis ?? null,
+      };
+    }
+  }
 
   return { ok: true, graphInput, threadId, query: parsedBody.data.query };
 }
@@ -204,6 +261,13 @@ function buildAnalyzeResponse(result: AgentState, threadId: string): AnalyzeResp
     trendDataErrors: result.trendDataErrors,
     growthAuthenticity: result.growthAuthenticity,
     growthCheckErrors: result.growthCheckErrors,
+    portfolioGrowthResults: result.portfolioGrowthResults,
+    tickerComparison: result.tickerComparison,
+    portfolioScanErrors: result.portfolioScanErrors,
+    companySnapshots: result.companySnapshots,
+    companySnapshotErrors: result.companySnapshotErrors,
+    technicalAnalysis: result.technicalAnalysis,
+    technicalAnalysisErrors: result.technicalAnalysisErrors,
     timeWindow: result.timeWindow,
     validationPassed: result.validationPassed,
     threadId,
@@ -378,7 +442,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // POST /api/analyze — run the graph (§7).
   // ---------------------------------------------------------------------------
   app.post("/api/analyze", async (request, reply) => {
-    const resolved = resolveAnalyzeRequest(request.body);
+    const resolved = await resolveAnalyzeRequest(request.body);
     if (!resolved.ok) {
       if (resolved.status >= 500) {
         request.log.error({ error: resolved.error, details: resolved.details }, resolved.error);
@@ -438,7 +502,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   // logged explicitly.
   // ---------------------------------------------------------------------------
   app.post("/api/analyze/stream", async (request, reply) => {
-    const resolved = resolveAnalyzeRequest(request.body);
+    const resolved = await resolveAnalyzeRequest(request.body);
     if (!resolved.ok) {
       if (resolved.status >= 500) {
         request.log.error({ error: resolved.error, details: resolved.details }, resolved.error);

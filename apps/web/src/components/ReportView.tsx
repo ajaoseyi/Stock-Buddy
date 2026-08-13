@@ -319,17 +319,17 @@ export function ReportView({
         */}
         {validationPassed ? (
           <span
-            className="tag sfs-tag-verified"
+            className=" tag sfs-tag-verified"
             title="Every ticker and percentage in this report was checked against the computed data."
           >
-            verified
+            Verified
           </span>
         ) : (
           <span
-            className="tag tag-accent"
+            className=" tag tag-accent"
             title="Automated validation did not pass. Check the figures against the tables below."
           >
-            unverified
+            Unverified
           </span>
         )}
       </div>

@@ -58,12 +58,20 @@ function makeState(overrides: Partial<AgentState> = {}): AgentState {
     sectorRankings: null,
     sectorLeaders: null,
     trendDataErrors: [],
+    partialHoldingsSectors: [],
     revenueGrowth: null,
     priceRevenueDiscrepancy: null,
     inorganicSignal: null,
     sectorBenchmark: null,
     growthAuthenticity: null,
     growthCheckErrors: [],
+    portfolioGrowthResults: null,
+    tickerComparison: null,
+    portfolioScanErrors: [],
+    companySnapshots: null,
+    companySnapshotErrors: [],
+    technicalAnalysis: null,
+    technicalAnalysisErrors: [],
     dataErrors: [],
     draftReport: null,
     validationPassed: false,
@@ -811,12 +819,131 @@ describe("sectorLeadersNode — state integration", () => {
     expect(result.trendDataErrors!.join(" ")).toMatch(/Utilities.*holdings exploded/);
   });
 
+  // A sector the user named by hand must get a leader breakdown even when it
+  // wasn't a top/bottom mover — otherwise "what tech stocks should I buy"
+  // silently returns nothing whenever tech isn't one of the period's biggest
+  // movers, which is exactly the gap that motivated this union in the first
+  // place.
+  it("includes an explicitly requested sector even when it is not a top/bottom mover", async () => {
+    process.env["SECTOR_TREND_TOP_N"] = "1";
+    const state = makeState({
+      sectors: ["Utilities"],
+      sectorRankings: [
+        ranking("Information Technology", 8),
+        ranking("Financials", 3),
+        ranking("Health Care", 0),
+        ranking("Utilities", -1),
+        ranking("Materials", -6),
+      ],
+    });
+
+    const result = await sectorLeadersNode(state, NOW);
+
+    // Top 1 up/down is Information Technology + Materials; Utilities is
+    // neither, but was named explicitly and must still appear.
+    expect(Object.keys(result.sectorLeaders!).sort()).toEqual([
+      "Information Technology",
+      "Materials",
+      "Utilities",
+    ]);
+  });
+
+  it("notes a requested sector with no ranking data instead of throwing", async () => {
+    const state = makeState({
+      sectors: ["Energy"],
+      sectorRankings: [ranking("Information Technology", 8)],
+    });
+
+    const result = await sectorLeadersNode(state, NOW);
+
+    expect(result.sectorLeaders!["Energy"]).toBeUndefined();
+    expect(result.trendDataErrors!.join(" ")).toMatch(
+      /Energy: requested but no ranking data was computed/,
+    );
+  });
+
+  it("does not duplicate a requested sector that is already a top/bottom mover", async () => {
+    const state = makeState({
+      sectors: ["Information Technology"],
+      sectorRankings: [ranking("Information Technology", 8)],
+    });
+
+    const result = await sectorLeadersNode(state, NOW);
+
+    expect(Object.keys(result.sectorLeaders!)).toEqual(["Information Technology"]);
+  });
+
   it("never writes fields owned by other nodes", async () => {
     const state = makeState({ sectorRankings: [ranking("Information Technology", 8)] });
 
     const result = await sectorLeadersNode(state, NOW);
 
     // The state contract in index.ts, enforced.
-    expect(Object.keys(result).sort()).toEqual(["sectorLeaders", "trendDataErrors"]);
+    expect(Object.keys(result).sort()).toEqual([
+      "partialHoldingsSectors",
+      "sectorLeaders",
+      "trendDataErrors",
+    ]);
+  });
+
+  describe("partialHoldingsSectors — flags sectors whose weight data is degraded", () => {
+    it("lists a sector whose holdings came back partial (Yahoo top-10 fallback)", async () => {
+      mocks.fetchEtfHoldings.mockResolvedValue({
+        holdings: [{ ticker: "AAA", weightPct: 30 }],
+        source: "yahoo_top_holdings",
+        warnings: [],
+        isPartial: true,
+      });
+      mocks.fetchConstituentOhlcv.mockResolvedValue(priceSeries(110));
+      const state = makeState({ sectorRankings: [ranking("Information Technology", 8)] });
+
+      const result = await sectorLeadersNode(state, NOW);
+
+      expect(result.partialHoldingsSectors).toEqual(["Information Technology"]);
+    });
+
+    it("excludes a sector whose holdings came back complete", async () => {
+      mocks.fetchEtfHoldings.mockResolvedValue({
+        holdings: [{ ticker: "AAA", weightPct: 30 }],
+        source: "alpha_vantage_etf_profile",
+        warnings: [],
+        isPartial: false,
+      });
+      mocks.fetchConstituentOhlcv.mockResolvedValue(priceSeries(110));
+      const state = makeState({ sectorRankings: [ranking("Information Technology", 8)] });
+
+      const result = await sectorLeadersNode(state, NOW);
+
+      expect(result.partialHoldingsSectors).toEqual([]);
+    });
+
+    it("lists a sector whose leader analysis threw entirely — at least as compromised as partial", async () => {
+      mocks.fetchEtfHoldings.mockRejectedValue(new Error("holdings exploded"));
+      const state = makeState({ sectorRankings: [ranking("Information Technology", 8)] });
+
+      const result = await sectorLeadersNode(state, NOW);
+
+      expect(result.partialHoldingsSectors).toEqual(["Information Technology"]);
+    });
+
+    it("does not carry a stale entry forward from prior state — built fresh each run", async () => {
+      mocks.fetchEtfHoldings.mockResolvedValue({
+        holdings: [{ ticker: "AAA", weightPct: 30 }],
+        source: "alpha_vantage_etf_profile",
+        warnings: [],
+        isPartial: false,
+      });
+      mocks.fetchConstituentOhlcv.mockResolvedValue(priceSeries(110));
+      // Simulates a PRIOR turn where this sector's holdings were partial —
+      // this run's own complete fetch must not be shadowed by that history.
+      const state = makeState({
+        sectorRankings: [ranking("Information Technology", 8)],
+        partialHoldingsSectors: ["Information Technology"],
+      });
+
+      const result = await sectorLeadersNode(state, NOW);
+
+      expect(result.partialHoldingsSectors).toEqual([]);
+    });
   });
 });

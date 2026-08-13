@@ -37,7 +37,7 @@ import {
   type QuarterlyFinancialsRow,
 } from "../../../tools/yahoo-finance.js";
 import { findYoyPriorRow, usableRevenueRows } from "./revenue-growth.js";
-import { MIN_BASELINE_QUARTERS, ROBUST_Z_THRESHOLD, robustZScore } from "./stats.js";
+import { MIN_BASELINE_QUARTERS, ROBUST_Z_THRESHOLD, robustZScore } from "../../../lib/stats.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

@@ -24,6 +24,7 @@ import { join } from "node:path";
 import {
   ALPHA_VANTAGE_DAILY_LIMIT,
   AlphaVantageApiError,
+  asAlphaVantageError,
   fetchDailySeries,
   fetchEtfProfile,
   hasQuotaFor,
@@ -124,6 +125,37 @@ describe("parseAlphaVantageEnvelope — HTTP 200 does not mean success", () => {
 
   it("passes real data through untouched", () => {
     expect(parseAlphaVantageEnvelope(dailyIbm)).toBe(dailyIbm);
+  });
+});
+
+// =============================================================================
+describe("asAlphaVantageError — seeing through withCache's error wrapping", () => {
+  it("returns a direct AlphaVantageApiError unchanged", () => {
+    const original = new AlphaVantageApiError("rate limit", true);
+    expect(asAlphaVantageError(original)).toBe(original);
+  });
+
+  // The shape `tools/cache.ts::withCache` actually produces: a plain Error
+  // whose message carries a "<source>/<endpoint> request failed: " prefix,
+  // with the real error preserved on `.cause`. Every live AV error a node
+  // catches has this shape, not the direct one above — a plain `instanceof`
+  // check misses it entirely, which was the root cause of quota-exhaustion
+  // detection silently never firing (sector-trend.ts, etf-holdings.ts).
+  it("unwraps an AlphaVantageApiError from a wrapping Error's .cause", () => {
+    const original = new AlphaVantageApiError("rate limit", true);
+    const wrapped = new Error("alpha_vantage/TIME_SERIES_DAILY request failed: rate limit", {
+      cause: original,
+    });
+    expect(asAlphaVantageError(wrapped)).toBe(original);
+  });
+
+  it("returns null for an error with no AlphaVantageApiError anywhere", () => {
+    expect(asAlphaVantageError(new Error("DNS failure"))).toBeNull();
+    expect(asAlphaVantageError("not even an error")).toBeNull();
+  });
+
+  it("returns null when .cause is set but isn't an AlphaVantageApiError", () => {
+    expect(asAlphaVantageError(new Error("wrapped", { cause: new Error("inner") }))).toBeNull();
   });
 });
 

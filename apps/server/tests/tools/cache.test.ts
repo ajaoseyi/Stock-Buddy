@@ -190,6 +190,8 @@ describe("withCache — TTL and expiry", () => {
       daily_ohlcv: 24 * HOUR, // §6: daily OHLCV — 24h
       company_profile: null, // §6: company tags — indefinite
       quarterly_fundamentals: 14 * DAY, // growth-authenticity: quarterly financials/balance-sheet
+      company_fundamentals_snapshot: 24 * HOUR, // §13.2a: combined quoteSummary bundle
+      ticker_lookup: null, // company-name → ticker resolution: indefinite, like company_profile
     });
   });
 });

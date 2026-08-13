@@ -399,6 +399,7 @@ textarea.input {
   align-items: center;
   font-size: 11px;
   letter-spacing: 0.02em;
+  font-weight: 600;
   padding: 3px 10px;
   border-radius: calc(var(--radius-md) * 0.75);
 }

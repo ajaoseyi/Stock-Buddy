@@ -172,6 +172,29 @@ describe("Tier 2 — Yahoo fallback (§5.8b: partial, and it must say so)", () =
     expect(result.warnings.join(" ")).not.toMatch(/quota exhausted/);
   });
 
+  // REGRESSION: real calls go through `tools/cache.ts::withCache`, which
+  // rethrows a fetcher failure as a plain `Error` with the original on
+  // `.cause` — `error instanceof AlphaVantageApiError` is false past that
+  // point, so this used to always fall to the generic "unavailable" branch
+  // and embed Alpha Vantage's raw rate-limit response text. Reproduces the
+  // wrapping shape `withCache` actually produces.
+  it("still names quota exhaustion when the error arrives wrapped by withCache", async () => {
+    mocks.fetchEtfProfile.mockRejectedValue(
+      new Error("alpha_vantage/ETF_PROFILE request failed: rate limit reached", {
+        cause: new AlphaVantageApiError(
+          "Thank you for using Alpha Vantage! Please consider spreading out your requests.",
+          true,
+        ),
+      }),
+    );
+
+    const result = await fetchEtfHoldings("XLK", "Information Technology");
+
+    const warnings = result.warnings.join(" ");
+    expect(warnings).toMatch(/quota exhausted/);
+    expect(warnings).not.toMatch(/Thank you for using Alpha Vantage/);
+  });
+
   // THE MOST IMPORTANT ASSERTION IN THIS FILE.
   it("flags the result as partial so emerging_mover is not trusted", async () => {
     mocks.fetchEtfProfile.mockRejectedValue(new AlphaVantageApiError("rate limit", true));
