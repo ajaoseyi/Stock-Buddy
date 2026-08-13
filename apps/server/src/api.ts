@@ -28,8 +28,11 @@
 
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import { HumanMessage } from "@langchain/core/messages";
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { AgentStateSchema, type AgentState } from "./state.js";
 import { getGraph } from "./graph.js";
@@ -565,6 +568,33 @@ export async function buildServer(): Promise<FastifyInstance> {
       reply.raw.end();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Static web client (production only).
+  //
+  // Local development keeps the two apps separate: Vite's dev server proxies
+  // `/api` to this server (apps/web/vite.config.ts) so each runs on its own
+  // port. A single-service deployment (Railway) has no separate static host,
+  // so in production this server also serves apps/web's built assets and
+  // falls back to index.html for any non-API GET route — react-router-dom's
+  // client-side routes (§7.2) must resolve on a direct visit or a refresh,
+  // not just via in-app navigation.
+  //
+  // Gated on NODE_ENV so the dev/test server never tries to read a `dist`
+  // folder that only exists after `npm run build`.
+  // ---------------------------------------------------------------------------
+  if (process.env["NODE_ENV"] === "production") {
+    const webDist = join(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+
+    await app.register(fastifyStatic, { root: webDist });
+
+    app.setNotFoundHandler((request, reply) => {
+      if (request.method !== "GET" || request.url.startsWith("/api")) {
+        return reply.status(404).send({ error: "Not found" });
+      }
+      return reply.sendFile("index.html", webDist);
+    });
+  }
 
   return app;
 }

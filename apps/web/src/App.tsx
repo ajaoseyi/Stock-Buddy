@@ -87,95 +87,65 @@ const EXAMPLES = [
 ];
 
 /**
- * The five stages a run passes through, mirroring `graph.ts`'s node sequence
- * (supervisor → sector-trend → sector-leaders → report-writer → validator).
+ * The working view's step list is built LIVE from real events off
+ * `POST /api/analyze/stream` (`analyzeStream` in `api/client.ts`) — no step
+ * is pre-declared. A row only appears once the node that produces it has
+ * actually started, so a growth-authenticity run shows growth-authenticity's
+ * nodes, an industry-trend run shows industry-trend's nodes, and neither
+ * shows the other's as dead, never-completing placeholders.
  *
- * Driven by REAL events from `POST /api/analyze/stream` (`analyzeStream` in
- * `api/client.ts`), not a timer — each line below only appears once the
- * corresponding node actually emitted it server-side. `sector_trend` alone
- * drives both `data_retrieval` and `trend_ranking`: CLAUDE.md's capability
- * spec never splits that node in two, but the UI's step list predates
- * streaming and still draws that distinction, so its progress events carry a
- * `phase` field that routes them to one log or the other (see
- * `stepIdForProgress` below).
+ * `NODE_STEP_LABELS` is keyed by "step key", which is `phase ?? node` for a
+ * given `ProgressEvent` — `phase` exists only for `sector_trend`, which
+ * narrates two distinct UI-visible stages ("Data retrieval" then, via
+ * `phase: "trend_ranking"`, "Trend ranking") off one node, per CLAUDE.md's
+ * capability spec. Every other node's key is just its own name. `supervisor`
+ * is deliberately absent — its progress narrates fast intent classification,
+ * not a user-facing stage — so its events are silently dropped, same as
+ * before.
  */
-type StepId = "data_retrieval" | "trend_ranking" | "leader_identification" | "report_writing" | "validation";
-
-const STEP_IDS: readonly StepId[] = [
-  "data_retrieval",
-  "trend_ranking",
-  "leader_identification",
-  "report_writing",
-  "validation",
-];
-
-const STEP_LABELS: Record<StepId, string> = {
-  data_retrieval: "Data retrieval",
+const NODE_STEP_LABELS: Record<string, string> = {
+  sector_trend: "Data retrieval",
   trend_ranking: "Trend ranking",
-  leader_identification: "Leader identification",
-  report_writing: "Report writing",
-  validation: "Validation",
+  sector_leaders: "Leader identification",
+  revenue_growth: "Revenue growth",
+  price_revenue_discrepancy: "Price vs. revenue check",
+  inorganic_signal: "M&A signal check",
+  sector_benchmark: "Sector benchmark",
+  growth_classification: "Growth classification",
+  portfolio_growth_scan: "Portfolio growth scan",
+  ticker_comparison: "Ticker comparison",
+  company_snapshot_scan: "Company snapshot",
+  technical_analysis_scan: "Technical analysis",
+  report_writer: "Report writing",
+  validator: "Validation",
 };
 
-/** One step's live state: whether it's run yet, and the real narration it has produced so far. */
+/** Which step key(s) a `node_complete` event closes. Only `sector_trend` closes two — see file note above. */
+const NODE_COMPLETE_KEYS: Record<string, string[]> = {
+  sector_trend: ["sector_trend", "trend_ranking"],
+};
+
+/** One step's live state: whether it's still running, and the real narration it has produced so far. */
 interface StepState {
-  status: "pending" | "active" | "done";
+  label: string;
+  status: "active" | "done";
   log: string[];
   /** How many times this step has run. >1 means the report writer/validator retry loop looped back. */
   attempt: number;
 }
 
-type StepStates = Record<StepId, StepState>;
-
-function freshStep(status: StepState["status"] = "pending"): StepState {
-  return { status, log: [], attempt: 1 };
+/** `order` is display order = the order steps were first seen; `byKey` is keyed by the step key (see above). */
+interface StepsState {
+  order: string[];
+  byKey: Record<string, StepState>;
 }
 
-/** `data_retrieval` starts active so the working view isn't blank the instant a request begins. */
-function initialStepStates(): StepStates {
-  return {
-    data_retrieval: freshStep("active"),
-    trend_ranking: freshStep(),
-    leader_identification: freshStep(),
-    report_writing: freshStep(),
-    validation: freshStep(),
-  };
-}
+const EMPTY_STEPS_STATE: StepsState = { order: [], byKey: {} };
 
-/** Which step a `progress` event's narration belongs to. `null` = not shown in this view (e.g. `supervisor`). */
-function stepIdForProgress(node: string, phase: string | undefined): StepId | null {
-  switch (node) {
-    case "sector_trend":
-      return phase === "trend_ranking" ? "trend_ranking" : "data_retrieval";
-    case "sector_leaders":
-      return "leader_identification";
-    case "report_writer":
-      return "report_writing";
-    case "validator":
-      return "validation";
-    default:
-      return null;
-  }
-}
-
-/** Which step(s) a `node_complete` event closes out. `sector_trend` alone closes two — see file note above. */
-function stepIdsForNodeComplete(node: string): StepId[] {
-  switch (node) {
-    case "sector_trend":
-      return ["data_retrieval", "trend_ranking"];
-    case "sector_leaders":
-      return ["leader_identification"];
-    case "report_writer":
-      return ["report_writing"];
-    case "validator":
-      return ["validation"];
-    default:
-      return [];
-  }
-}
-
-function updateStep(states: StepStates, stepId: StepId, fn: (step: StepState) => StepState): StepStates {
-  return { ...states, [stepId]: fn(states[stepId]) };
+function updateStepsState(states: StepsState, key: string, fn: (step: StepState) => StepState): StepsState {
+  const existing = states.byKey[key];
+  if (existing === undefined) return states;
+  return { ...states, byKey: { ...states.byKey, [key]: fn(existing) } };
 }
 
 /**
@@ -189,25 +159,31 @@ function updateStep(states: StepStates, stepId: StepId, fn: (step: StepState) =>
  * stays visible. Hiding it would be the same kind of silent-correction this
  * codebase's server side explicitly refuses to do elsewhere.
  */
-function applyStreamEvent(event: StreamEvent, prev: StepStates): StepStates {
+function applyStreamEvent(event: StreamEvent, prev: StepsState): StepsState {
   if (event.type === "progress") {
-    const stepId = stepIdForProgress(event.node, event.phase);
-    if (stepId === null) return prev;
+    const key = event.phase ?? event.node;
+    const label = NODE_STEP_LABELS[key];
+    if (label === undefined) return prev;
 
-    return updateStep(prev, stepId, (step) => {
+    if (prev.byKey[key] === undefined) {
+      return {
+        order: [...prev.order, key],
+        byKey: { ...prev.byKey, [key]: { label, status: "active", log: [event.message], attempt: 1 } },
+      };
+    }
+
+    return updateStepsState(prev, key, (step) => {
       if (step.status === "done") {
         const attempt = step.attempt + 1;
-        return { status: "active", attempt, log: [...step.log, `— Attempt ${attempt} —`, event.message] };
+        return { ...step, status: "active", attempt, log: [...step.log, `— Attempt ${attempt} —`, event.message] };
       }
       return { ...step, status: "active", log: [...step.log, event.message] };
     });
   }
 
   if (event.type === "node_complete") {
-    return stepIdsForNodeComplete(event.node).reduce(
-      (states, stepId) => updateStep(states, stepId, (step) => ({ ...step, status: "done" })),
-      prev,
-    );
+    const keys = NODE_COMPLETE_KEYS[event.node] ?? [event.node];
+    return keys.reduce((states, key) => updateStepsState(states, key, (step) => ({ ...step, status: "done" })), prev);
   }
 
   return prev;
@@ -319,7 +295,7 @@ export function App() {
   // --- Client-side history / modal state ----------------------------------------
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
-  const [stepStates, setStepStates] = useState<StepStates>(initialStepStates);
+  const [stepStates, setStepStates] = useState<StepsState>(EMPTY_STEPS_STATE);
   const [now, setNow] = useState(() => Date.now());
 
   /** Lets a new submission cancel one already in flight. */
@@ -395,7 +371,7 @@ export function App() {
       setLoading(true);
       setError(null);
       setErrorDetails([]);
-      setStepStates(initialStepStates());
+      setStepStates(EMPTY_STEPS_STATE);
 
       try {
         const response = await analyzeStream({
@@ -645,19 +621,14 @@ export function App() {
             <p className="text-muted" style={{ fontSize: "13px", marginBottom: "var(--space-4)" }}>
               Analysing: &quot;{query.trim() !== "" ? query : followUpQuery}&quot;
             </p>
-            {STEP_IDS.map((stepId) => {
-              const step = stepStates[stepId];
-              const state =
-                step.status === "done"
-                  ? "sfs-step-done"
-                  : step.status === "active"
-                    ? "sfs-step-active"
-                    : "sfs-step-pending";
+            {stepStates.order.map((key) => {
+              const step = stepStates.byKey[key]!;
+              const state = step.status === "done" ? "sfs-step-done" : "sfs-step-active";
               return (
-                <div key={stepId} className={`sfs-step ${state}`}>
+                <div key={key} className={`sfs-step ${state}`}>
                   <div className="sfs-step-mark">{step.status === "done" ? "✓" : ""}</div>
                   <div>
-                    <div className="sfs-step-label">{STEP_LABELS[stepId]}</div>
+                    <div className="sfs-step-label">{step.label}</div>
                     {step.log.length > 0 && (
                       <ul className="sfs-step-log">
                         {step.log.map((line, i) => (
