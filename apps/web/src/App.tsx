@@ -78,6 +78,7 @@ import { LeaderDrilldown } from "./components/LeaderDrilldown.js";
 import { HistoryModal } from "./components/HistoryModal.js";
 import { formatSpeed, formatWeight } from "./components/quadrant.js";
 import { relativeTimeLabel } from "./relativeTime.js";
+import { capitalizeFirst } from "./capitalize.js";
 
 /** Example questions, so a new user is not staring at an empty box. */
 const EXAMPLES = [
@@ -355,6 +356,23 @@ export function App() {
     };
   }, [urlThreadId, result, loading]);
 
+  // Mirror of startNewConversation's reset, but reactive: covers browser
+  // back/forward landing on "/" (a popstate, not a click), which the
+  // deep-linking effect above deliberately ignores (it only acts when a
+  // thread IS named). Without this, `result`/`error` — fetched content, not
+  // itself URL state — keeps rendering the previous thread's report over a
+  // URL that no longer names one.
+  useEffect(() => {
+    if (urlThreadId !== undefined) return;
+    abortRef.current?.abort();
+    setResult(null);
+    setError(null);
+    setErrorDetails([]);
+    setHistoryEntries([]);
+    setActiveQueryLabel("");
+    setStepStates(EMPTY_STEPS_STATE);
+  }, [urlThreadId]);
+
   const submit = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -553,7 +571,10 @@ export function App() {
                 className={`tag sfs-chip${entry.query === activeQueryLabel ? " sfs-chip-current" : ""}`}
                 onClick={() => selectHistoryEntry(entry)}
               >
-                ↩ {entry.query.length > 34 ? `${entry.query.slice(0, 34)}…` : entry.query}
+                ↩{" "}
+                {entry.query.length > 34
+                  ? `${capitalizeFirst(entry.query).slice(0, 34)}…`
+                  : capitalizeFirst(entry.query)}
               </button>
             ))}
           </div>
@@ -615,31 +636,49 @@ export function App() {
       )}
 
       {/* --- Working ------------------------------------------------------------ */}
+      {/*
+        No generic "Analysing: ..." holding text before the first real
+        progress event lands — the step list itself IS the loading state.
+        Every capability's very first work is fetching data (an ETF/ticker
+        price history, a fundamentals snapshot, etc.), so until the server's
+        first `progress` event arrives (see `applyStreamEvent` above), an
+        optimistic "Data retrieval" step is shown active. It is render-only —
+        never written into `stepStates` — so it can never end up a dead,
+        never-completing placeholder: the instant a real event arrives,
+        `stepStates.order` is non-empty and this synthetic row is replaced by
+        the real, capability-specific steps.
+      */}
       {view === "working" && (
         <div className="sfs-working">
           <div className="sfs-working-inner">
-            <p className="text-muted" style={{ fontSize: "13px", marginBottom: "var(--space-4)" }}>
-              Analysing: &quot;{query.trim() !== "" ? query : followUpQuery}&quot;
-            </p>
-            {stepStates.order.map((key) => {
-              const step = stepStates.byKey[key]!;
-              const state = step.status === "done" ? "sfs-step-done" : "sfs-step-active";
-              return (
-                <div key={key} className={`sfs-step ${state}`}>
-                  <div className="sfs-step-mark">{step.status === "done" ? "✓" : ""}</div>
-                  <div>
-                    <div className="sfs-step-label">{step.label}</div>
-                    {step.log.length > 0 && (
-                      <ul className="sfs-step-log">
-                        {step.log.map((line, i) => (
-                          <li key={i}>{line}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
+            {stepStates.order.length === 0 ? (
+              <div className="sfs-step sfs-step-active">
+                <div className="sfs-step-mark"></div>
+                <div>
+                  <div className="sfs-step-label">Data retrieval</div>
                 </div>
-              );
-            })}
+              </div>
+            ) : (
+              stepStates.order.map((key) => {
+                const step = stepStates.byKey[key]!;
+                const state = step.status === "done" ? "sfs-step-done" : "sfs-step-active";
+                return (
+                  <div key={key} className={`sfs-step ${state}`}>
+                    <div className="sfs-step-mark">{step.status === "done" ? "✓" : ""}</div>
+                    <div>
+                      <div className="sfs-step-label">{step.label}</div>
+                      {step.log.length > 0 && (
+                        <ul className="sfs-step-log">
+                          {step.log.map((line, i) => (
+                            <li key={i}>{line}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
             <div ref={workingEndRef} />
           </div>
         </div>

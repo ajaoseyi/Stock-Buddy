@@ -141,6 +141,23 @@ export function extractPercentages(text: string): number[] {
 }
 
 /**
+ * Ampersand-joined finance abbreviations ("M&A", "PP&E", "S&P", "R&D", "P&L")
+ * are stripped BEFORE ticker extraction below. `&` is not a `\w` character, so
+ * the ticker regex's `\b` boundaries see "M&A" as two separate all-caps runs —
+ * "M" and "A" — each a plausible-looking ticker on its own. This is not
+ * theoretical: `buildGrowthTaskPrompt`'s REQUIRED STRUCTURE literally
+ * instructs the model to write "the M&A check", and its field explanation
+ * says "goodwill/PP&E/cash" — so a correct, well-formed growth-authenticity
+ * report almost always contains both terms, and without this strip every such
+ * report was spuriously rejected for "citing" tickers "M", "A", "PP", "E"
+ * (observed live), burning the entire retry budget every time. Generic by
+ * shape (`LETTERS&LETTERS`) rather than special-cased to "M&A"/"PP&E" alone,
+ * since real tickers never contain "&" and both "M" and "A" are themselves
+ * real tickers (Macy's, Agilent) that must stay extractable everywhere else.
+ */
+const AMPERSAND_ABBREVIATION = /\b[A-Z]{1,5}&[A-Z]{1,5}\b/g;
+
+/**
  * Pull every plausible ticker symbol out of the prose.
  *
  * Conservative by design: only all-caps runs of 1-5 letters, minus the
@@ -150,8 +167,9 @@ export function extractPercentages(text: string): number[] {
  * entire retry budget.
  */
 export function extractTickers(text: string): string[] {
+  const sanitized = text.replace(AMPERSAND_ABBREVIATION, "");
   const found = new Set<string>();
-  for (const match of text.matchAll(/\b([A-Z]{1,5})\b/g)) {
+  for (const match of sanitized.matchAll(/\b([A-Z]{1,5})\b/g)) {
     const candidate = match[1]!;
     if (!TICKER_STOPWORDS.has(candidate)) found.add(candidate);
   }

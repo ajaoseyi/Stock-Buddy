@@ -18,6 +18,7 @@
 import { useEffect, useState } from "react";
 import { deleteThread, listRecentThreads, type RecentThread } from "../api/client.js";
 import { relativeTimeLabel } from "../relativeTime.js";
+import { capitalizeFirst } from "../capitalize.js";
 
 export interface HistoryModalProps {
   onClose: () => void;
@@ -116,7 +117,9 @@ export function HistoryModal({ onClose, onSelectThread, currentThreadId }: Histo
                   className="sfs-history-row-main"
                   onClick={() => onSelectThread(thread.threadId)}
                 >
-                  <span className="sfs-history-row-query">{truncate(thread.lastQuery, 60)}</span>
+                  <span className="sfs-history-row-query">
+                    {truncate(capitalizeFirst(thread.lastQuery), 60)}
+                  </span>
                   <span className="text-muted sfs-history-row-time">
                     {relativeTimeLabel(thread.updatedAt, now)}
                   </span>

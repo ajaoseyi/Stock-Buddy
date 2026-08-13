@@ -39,6 +39,7 @@
  */
 
 import type { JSX } from "react";
+import { capitalizeFirst } from "../capitalize.js";
 
 // =============================================================================
 // SECTION 1 — Entity linking
@@ -334,7 +335,9 @@ export function ReportView({
         )}
       </div>
 
-      {query !== "" && <div className="sfs-requery">Re: &ldquo;{query}&rdquo;</div>}
+      {query !== "" && (
+        <div className="sfs-requery">Re: &ldquo;{capitalizeFirst(query)}&rdquo;</div>
+      )}
 
       <div className="sfs-narrative">
         {report === null || report.trim() === "" ? (

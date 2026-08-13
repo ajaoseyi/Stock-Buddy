@@ -135,6 +135,25 @@ describe("extractTickers", () => {
   it("ignores lowercase prose", () => {
     expect(extractTickers("technology led the market this month")).toEqual([]);
   });
+
+  // REGRESSION: live growth-authenticity reports were rejected after every
+  // run because `buildGrowthTaskPrompt`'s own REQUIRED STRUCTURE instructs
+  // the model to write "the M&A check" and explain "goodwill/PP&E/cash" — `&`
+  // is not a `\w` character, so the old regex's `\b` boundaries split those
+  // into standalone all-caps runs "M", "A", "PP", "E", each flagged as an
+  // unknown ticker. Burned the entire retry budget on every such report.
+  it("does not split ampersand-joined finance abbreviations into fake tickers", () => {
+    expect(
+      extractTickers(
+        "There is no inorganic-growth signal from the M&A check, with a goodwill change " +
+          "percentage that is null, a PP&E change of 2.62%, and a decreasing cash direction.",
+      ),
+    ).toEqual([]);
+  });
+
+  it("still finds a real single/double-letter ticker outside an ampersand pairing", () => {
+    expect(extractTickers("A and M both fell today")).toEqual(["A", "M"]);
+  });
 });
 
 // =============================================================================

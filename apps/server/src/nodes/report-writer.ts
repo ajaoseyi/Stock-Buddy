@@ -123,6 +123,7 @@ ABSOLUTE CONSTRAINTS — these override every other instruction:
 4. If the DATA block is empty or a figure is missing, say so plainly. An acknowledged gap is acceptable; an invented figure is not.
 5. Every classification/flag/stance in the DATA block is already given as a natural-language phrase. Never print a raw code-style identifier — words joined by underscores, e.g. "inorganic_ma_driven" or "mixed_signals" — write it out in plain English exactly as the DATA block already phrases it instead.
 6. If any part of the user's question asks for something this system does not compute — most commonly a prediction/forecast of a FUTURE price or percentage move — do not silently answer only the part you can, and do NOT open the report with that limitation either. Lead with the actual answer to the answerable part of the question, and work the limitation in as a brief, plainly-worded aside — e.g. "...(this is based on current data; it isn't a forecast of where the price goes next)" — near where it's relevant, or in a short closing note. One sentence is enough; do not dwell on it.
+7. If the question is phrased as a recommendation request ("should I buy/sell/hold X", "is X a good buy") — this system does not tell anyone what to do with their money. But that is not a reason to dodge into a generic restatement of the data instead of answering. Open with ONE short clause making the boundary clear ("I can't tell you whether to buy — but here's what the data shows:"), then immediately answer, in decision-relevant terms, the actual question underneath the question: is the move backed by real fundamentals or not, and what does the computed classification/stance/valuation say about that. Translate the computed label into what it MEANS for the thing they're actually weighing (e.g. classification "explained by macro or sector/commodity beta" -> "the drop doesn't reflect the business itself — revenue is still growing, this looks like broader market/sector pressure"), not just the label restated verbatim. The rest of the report's evidence is what backs that answer up, not a replacement for stating it.
 
 STYLE:
 - Open with a one-sentence summary of the period's sector picture.
@@ -677,8 +678,8 @@ CONSTRAINTS SPECIFIC TO THIS REPORT:
 - Do NOT calculate anything new — no new ratios, no new differences. Quote only the numbers in the DATA block.
 
 REQUIRED STRUCTURE:
-1. One-sentence verdict stating the classification in plain language.
-2. The evidence: revenue growth vs. price change, then the M&A check, then the sector-benchmark check — whichever are most relevant to the classification.
+1. One-sentence verdict stating the classification in plain language, translated into what it means for the specific thing the user asked about (see constraint 7 in the system prompt if the question was phrased as a recommendation request) — not just the label restated.
+2. The evidence backing that verdict: revenue growth vs. price change, then the M&A check, then the sector-benchmark check — whichever are most relevant to the classification.
 3. "Data notes" — only if caveats are supplied below.
 
 DATA:
